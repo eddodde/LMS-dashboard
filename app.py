@@ -163,6 +163,7 @@ if 선택_연도:
     df = df[df['연도'].isin(선택_연도)]
 
 df_with_perf = df.dropna(subset=['CTR', 'CR', 'ROAS'])
+df_with_perf = df_with_perf[df_with_perf['ROAS'] > 0]
 
 
 # ── 헤더 ──────────────────────────────────────────────
