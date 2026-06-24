@@ -261,7 +261,9 @@ def fmt_val(v, metric):
 
 
 # ── 탭 구성 ──────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석", "🗂 캠페인 상세"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석", "🗂 캠페인 상세", "🏷 AF코드별 효율"]
+)
 
 
 # ══ TAB 1: 채널별 분석 ══════════════════════════════════
@@ -723,3 +725,116 @@ with tab4:
     else:
         msg = "2개 이상 연도에" if num_years_rec >= 2 else "2개월 이상"
         st.info(f"{msg} 걸쳐 발송된 반복 캠페인 그룹이 없습니다.")
+
+
+# ══ TAB 5: AF코드별 효율 ══════════════════════════════════
+with tab5:
+    st.markdown('<div class="section-title">AF코드별 효율 비교</div>', unsafe_allow_html=True)
+
+    # AF코드 소스 결정: 'AF코드' 컬럼이 있으면 사용, 없으면 캠페인명 핵심코드로 대체
+    if 'AF코드' in df.columns and df['AF코드'].notna().any():
+        df['_분석코드'] = df['AF코드'].astype(str).str.strip()
+        code_basis = "파일의 'AF코드' 열 기준"
+    else:
+        df['_분석코드'] = df['캠페인명'].apply(extract_campaign_group)
+        code_basis = "AF코드 열이 없어 캠페인명 핵심코드로 대체 (파일에 'AF코드' 열을 추가하면 자동 전환)"
+    st.caption(f"※ {code_basis} | 효율 = 모수 1명당 거래액 · ROAS = Σ거래액÷Σ비용")
+
+    base = df_with_perf.copy()
+    base['_분석코드'] = df.loc[base.index, '_분석코드']
+    base = base.dropna(subset=['_분석코드'])
+    base = base[base['_분석코드'].astype(str).str.len() > 0]
+
+    if not len(base):
+        st.info("효율을 계산할 성과 데이터가 없습니다.")
+    else:
+        code_rows = []
+        for code, g in base.groupby('_분석코드'):
+            sends = pd.to_numeric(g['모수'], errors='coerce').sum()
+            rev = pd.to_numeric(g['거래액'], errors='coerce').sum()
+            code_rows.append({
+                'AF코드': code,
+                '발송횟수': len(g),
+                '총모수': sends,
+                '총거래액': rev,
+                '1인당거래액': rev / sends if sends and sends > 0 else np.nan,
+                '평균CTR': w_avg(g['CTR'], g['모수']),
+                '평균CR': w_cr(g),
+                '평균ROAS': pooled_roas(g),
+            })
+        code_df = pd.DataFrame(code_rows)
+
+        eff_metric = st.radio(
+            "효율 지표",
+            ['1인당거래액', '평균ROAS', '총거래액', '평균CTR', '평균CR'],
+            horizontal=True, key='af_metric'
+        )
+        top_n_af = st.slider("표시할 AF코드 수 (상위)", 5, 40, max(5, min(15, len(code_df))), key='af_topn')
+        code_sorted = code_df.sort_values(eff_metric, ascending=False).head(top_n_af)
+
+        def fmt_af(v, m):
+            if pd.isna(v):
+                return '-'
+            if m == '평균ROAS':
+                return f"{v:.1f}%"
+            if m in ['평균CTR', '평균CR']:
+                return f"{v:.1%}"
+            if m == '1인당거래액':
+                return f"{v:,.0f}원"
+            return f"{v:,.0f}"
+
+        fig_af = px.bar(
+            code_sorted.sort_values(eff_metric), x=eff_metric, y='AF코드', orientation='h',
+            text=code_sorted.sort_values(eff_metric)[eff_metric].apply(lambda v: fmt_af(v, eff_metric)),
+            color=eff_metric, color_continuous_scale='Blues',
+        )
+        fig_af.update_traces(textposition='outside')
+        fig_af.update_layout(height=max(380, len(code_sorted) * 26), yaxis={'categoryorder': 'total ascending'},
+                             coloraxis_showscale=False)
+        if eff_metric in ['평균CTR', '평균CR']:
+            fig_af.update_xaxes(tickformat='.1%')
+        st.plotly_chart(fig_af, use_container_width=True)
+
+        # 효율 산점도: 타겟(모수) vs 거래액 — 우상향일수록 규모, 기울기가 클수록 효율
+        st.markdown('<div class="section-title">타겟 규모 vs 거래액 (버블=ROAS)</div>', unsafe_allow_html=True)
+        st.caption("좌하단→우상단 대각선보다 위면 1인당 거래액(효율)이 평균보다 높음")
+        scatter_df = code_df.dropna(subset=['총모수', '총거래액'])
+        scatter_df = scatter_df[scatter_df['총모수'] > 0]
+        if len(scatter_df):
+            avg_eff = scatter_df['총거래액'].sum() / scatter_df['총모수'].sum()
+            fig_sc = px.scatter(
+                scatter_df, x='총모수', y='총거래액',
+                size=scatter_df['평균ROAS'].clip(lower=0).fillna(0),
+                color='1인당거래액', color_continuous_scale='RdYlGn',
+                hover_name='AF코드',
+                hover_data={'발송횟수': True, '평균ROAS': ':.1f', '1인당거래액': ':,.0f'},
+                labels={'총모수': '타겟(총 모수, 명)', '총거래액': '총 거래액(원)'},
+            )
+            # 평균 효율 기준선 (거래액 = 모수 × 평균 1인당거래액)
+            x_max = scatter_df['총모수'].max()
+            fig_sc.add_shape(type='line', x0=0, y0=0, x1=x_max, y1=x_max * avg_eff,
+                             line=dict(color='gray', dash='dash'))
+            fig_sc.update_layout(height=460)
+            st.plotly_chart(fig_sc, use_container_width=True)
+            st.caption(f"평균 효율(점선): 1인당 {avg_eff:,.0f}원")
+
+        # 인사이트
+        valid_eff = code_df.dropna(subset=['1인당거래액'])
+        if len(valid_eff) >= 2:
+            best = valid_eff.loc[valid_eff['1인당거래액'].idxmax()]
+            worst = valid_eff.loc[valid_eff['1인당거래액'].idxmin()]
+            st.info(
+                f"효율 1위: **{best['AF코드']}** — 타겟 {best['총모수']:,.0f}명 → 거래액 {best['총거래액']:,.0f}원 "
+                f"(1인당 {best['1인당거래액']:,.0f}원, ROAS {best['평균ROAS']:.1f}%)  \n"
+                f"효율 최하위: **{worst['AF코드']}** — 1인당 {worst['1인당거래액']:,.0f}원  \n"
+                f"→ 타겟 규모가 커도 1인당 거래액이 낮으면 모수 대비 비효율. 규모와 효율을 함께 보세요."
+            )
+
+        with st.expander("AF코드별 상세 수치"):
+            st.dataframe(
+                code_df.sort_values(eff_metric, ascending=False).style.format({
+                    '총모수': '{:,.0f}', '총거래액': '{:,.0f}', '1인당거래액': '{:,.0f}',
+                    '평균CTR': '{:.1%}', '평균CR': '{:.1%}', '평균ROAS': '{:.1f}%', '발송횟수': '{:,}',
+                }),
+                use_container_width=True, hide_index=True
+            )
