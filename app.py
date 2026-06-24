@@ -76,6 +76,7 @@ def load_data(file_t, file_m):
 
     perf_cols = ['캠페인명', '모수', 'UV', 'CTR', 'CR', '거래액', 'ROAS']
     df_t_perf = df_t_perf.dropna(subset=['캠페인명'])
+    df_t_perf = df_t_perf[~df_t_perf['캠페인명'].astype(str).str.contains(r'합계|총계|종합|소계|\d{2}년', regex=True)]
     df_m_perf2 = df_m_perf2[perf_cols]
     df_perf = pd.concat([df_t_perf[perf_cols], df_m_perf2[perf_cols]], ignore_index=True)
 
