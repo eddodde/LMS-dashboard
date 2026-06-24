@@ -53,6 +53,9 @@ def load_data(file_t, file_m):
     # 타부서 ROAS (Sheet1에서 별도 조회)
     df_t_roas = pd.read_excel(file_t, sheet_name="Sheet1", header=4)
     df_t_roas = df_t_roas[['캠페인명', 'ROAS']].dropna(subset=['캠페인명', 'ROAS'])
+    df_t_roas['ROAS'] = pd.to_numeric(df_t_roas['ROAS'], errors='coerce')
+    if df_t_roas['ROAS'].dropna().mean() < 10:
+        df_t_roas['ROAS'] = df_t_roas['ROAS'] * 100
     df_t_perf = df_t_perf.merge(df_t_roas, on='캠페인명', how='left')
 
     # 멤버십 발송
@@ -77,6 +80,9 @@ def load_data(file_t, file_m):
     # 멤버십 ROAS (캠페인별 실적 시트에서 별도 조회)
     df_m_roas = pd.read_excel(file_m, sheet_name="캠페인별 실적", header=6)
     df_m_roas = df_m_roas[['캠페인명', 'ROAS']].dropna(subset=['캠페인명', 'ROAS'])
+    df_m_roas['ROAS'] = pd.to_numeric(df_m_roas['ROAS'], errors='coerce')
+    if df_m_roas['ROAS'].dropna().mean() < 10:
+        df_m_roas['ROAS'] = df_m_roas['ROAS'] * 100
     df_m_perf2 = df_m_perf2.merge(df_m_roas, on='캠페인명', how='left')
 
     send_cols = ['구분', '요청부서', '채널', '발송일자', '캠페인명', '타겟', '문구', '비고', '모수', '비용', '출처']
@@ -102,25 +108,43 @@ def load_data(file_t, file_m):
     df['채널'] = df['채널'].fillna('LMS').str.upper()
     df['월'] = df['발송일자'].dt.to_period('M').astype(str)
     df['연도'] = df['발송일자'].dt.year
+    요일맵 = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
+    df['요일'] = df['발송일자'].dt.dayofweek.map(요일맵)
+    df['시간'] = df['발송일자'].dt.hour
 
     return df
 
 
 @st.cache_data
 def extract_keywords(texts, top_n=30):
-    stop = ['광고', 'LF몰', 'LFmall', '무료수신거부', '고객센터', '080', '1544', 'https', 'http',
-            'bit', 'ly', '\\n', '\n', 'NaN', 'nan', '님', '을', '를', '이', '가', '은', '는',
-            '의', '에', '에서', '으로', '로', '과', '와', '도', '만', '에서만', '까지']
-    pattern = re.compile(r'[a-zA-Z0-9\[\]\(\)\!\★▷▶◇\-\*·/\.,:↓%~#]+')
+    stop = {
+        '광고', 'LF몰', 'LFmall', '무료수신거부', '고객센터', 'NaN', 'nan',
+        '님', '을', '를', '이', '가', '은', '는', '의', '에', '에서', '으로', '로',
+        '과', '와', '도', '만', '에서만', '까지', '수신거부', '안내', '확인',
+        # 템플릿 변수 — 모든 문자에 들어가는 boilerplate
+        '고객명', '주문번호', '상품명', '금액', '날짜', '시간', '브랜드명',
+        # 너무 범용적인 단어
+        '상품', '구매', '주문', '배송', '서비스', '앱', '사이트', '페이지',
+    }
+    # 유사어 → 대표어로 통합 (정규화 맵)
+    normalize = {
+        '고객님만': '고객님', '고객님께': '고객님', '고객님을': '고객님',
+        '보셨던': '행동기반', '담으셨던': '행동기반', '찜하셨던': '행동기반',
+        '할인가': '할인', '특가': '할인', '세일': '할인',
+        '오늘까지': '마감임박', '오늘만': '마감임박', '종료임박': '마감임박',
+    }
+    pattern = re.compile(r'[a-zA-Z0-9\[\]\(\)\!\★▷▶◇\-\*·/\.,:↓%~#\[\]]+')
     keyword_counts = Counter()
     for text in texts:
-        if pd.isna(text) or text in ('nan', 'NaN', ''):
+        if pd.isna(text) or str(text) in ('nan', 'NaN', ''):
             continue
         text = re.sub(pattern, ' ', str(text))
         words = re.findall(r'[가-힣]{2,6}', text)
         for w in words:
-            if w not in stop and len(w) >= 2:
-                keyword_counts[w] += 1
+            if w in stop or len(w) < 2:
+                continue
+            w = normalize.get(w, w)
+            keyword_counts[w] += 1
     return keyword_counts.most_common(top_n)
 
 
@@ -258,15 +282,14 @@ with tab1:
 
     yoy_metric = st.radio("비교 지표", ['평균CTR', '평균CR', '평균ROAS', '총거래액', '발송건수'], horizontal=True, key='yoy_m')
 
-    text_vals = ch_yr[yoy_metric].apply(lambda v: fmt_val(v, yoy_metric))
-    fig_yoy = px.bar(
+    fig_yoy = px.line(
         ch_yr, x='연도', y=yoy_metric, color='채널',
-        barmode='group', color_discrete_map=COLORS,
-        text=text_vals,
+        markers=True, color_discrete_map=COLORS,
+        text=ch_yr[yoy_metric].apply(lambda v: fmt_val(v, yoy_metric)),
         labels={'연도': '', yoy_metric: yoy_metric}
     )
-    fig_yoy.update_traces(textposition='outside')
-    fig_yoy.update_layout(height=380, uniformtext_minsize=9)
+    fig_yoy.update_traces(textposition='top center', mode='lines+markers+text')
+    fig_yoy.update_layout(height=380)
     if yoy_metric in ['평균CTR', '평균CR']:
         fig_yoy.update_yaxes(tickformat='.1%')
     st.plotly_chart(fig_yoy, use_container_width=True)
@@ -350,10 +373,11 @@ with tab1:
             평균거래액=('거래액', 'mean'),
         ).reset_index().dropna()
         if len(cost_eff):
-            fig_eff = px.bar(
-                cost_eff, x='채널', y=['평균비용', '평균거래액'],
-                barmode='group', color_discrete_sequence=['#C44E52', '#55A868'],
-                labels={'value': '금액(원)', 'variable': ''}
+            cost_melt = cost_eff.melt(id_vars='채널', value_vars=['평균비용', '평균거래액'], var_name='항목', value_name='금액')
+            fig_eff = px.line(
+                cost_melt, x='채널', y='금액', color='항목',
+                markers=True, color_discrete_sequence=['#C44E52', '#55A868'],
+                labels={'금액': '금액(원)'}
             )
             fig_eff.update_layout(height=320)
             st.plotly_chart(fig_eff, use_container_width=True)
@@ -415,6 +439,69 @@ with tab2:
             f"{mix_metric} 최고: **{peak['월']}** ({fmt_val(peak[mix_metric], mix_metric)})  \n"
             f"{mix_metric} 최저: **{low['월']}** ({fmt_val(low[mix_metric], mix_metric)})"
         )
+
+    # ── 요일별 성과 ──────────────────────────────────────────────
+    st.markdown('<div class="section-title">요일별 평균 성과</div>', unsafe_allow_html=True)
+
+    요일순서 = ['월', '화', '수', '목', '금', '토', '일']
+    df_dow = df_with_perf.dropna(subset=['요일'])
+    if len(df_dow):
+        dow_agg = df_dow.groupby('요일').agg(
+            캠페인건수=('캠페인명', 'count'),
+            평균CTR=('CTR', 'mean'),
+            평균CR=('CR', 'mean'),
+            평균ROAS=('ROAS', 'mean'),
+            평균모수=('모수', 'mean'),
+        ).reindex(요일순서).reset_index()
+
+        dow_metric = st.radio("요일별 지표", ['평균CTR', '평균CR', '평균ROAS', '캠페인건수'], horizontal=True, key='dow_m')
+        fig_dow = px.line(
+            dow_agg, x='요일', y=dow_metric,
+            markers=True,
+            text=dow_agg[dow_metric].apply(lambda v: fmt_val(v, dow_metric)),
+            labels={'요일': '', dow_metric: dow_metric}
+        )
+        fig_dow.update_traces(textposition='top center', mode='lines+markers+text', line=dict(color='#4C72B0'))
+        fig_dow.update_layout(height=340)
+        if dow_metric in ['평균CTR', '평균CR']:
+            fig_dow.update_yaxes(tickformat='.1%')
+        st.plotly_chart(fig_dow, use_container_width=True)
+
+        best_dow = dow_agg.dropna(subset=[dow_metric]).loc[dow_agg.dropna(subset=[dow_metric])[dow_metric].idxmax()]
+        worst_dow = dow_agg.dropna(subset=[dow_metric]).loc[dow_agg.dropna(subset=[dow_metric])[dow_metric].idxmin()]
+        st.info(
+            f"{dow_metric} 최고 요일: **{best_dow['요일']}요일** ({fmt_val(best_dow[dow_metric], dow_metric)})  \n"
+            f"{dow_metric} 최저 요일: **{worst_dow['요일']}요일** ({fmt_val(worst_dow[dow_metric], dow_metric)})"
+        )
+
+    # ── 시간대별 성과 (시간 데이터 있을 때만) ──────────────────────────────────────────────
+    df_hour = df_with_perf.dropna(subset=['시간'])
+    if len(df_hour) and df_hour['시간'].nunique() > 1:
+        st.markdown('<div class="section-title">시간대별 평균 성과</div>', unsafe_allow_html=True)
+        hour_agg = df_hour.groupby('시간').agg(
+            캠페인건수=('캠페인명', 'count'),
+            평균CTR=('CTR', 'mean'),
+            평균CR=('CR', 'mean'),
+            평균ROAS=('ROAS', 'mean'),
+        ).reset_index().sort_values('시간')
+
+        hour_metric = st.radio("시간대별 지표", ['평균CTR', '평균CR', '평균ROAS', '캠페인건수'], horizontal=True, key='hour_m')
+        fig_hr = px.line(
+            hour_agg, x='시간', y=hour_metric,
+            markers=True,
+            text=hour_agg[hour_metric].apply(lambda v: fmt_val(v, hour_metric)),
+            labels={'시간': '발송 시간', hour_metric: hour_metric}
+        )
+        fig_hr.update_traces(textposition='top center', mode='lines+markers+text', line=dict(color='#DD8452'))
+        fig_hr.update_layout(height=340)
+        if hour_metric in ['평균CTR', '평균CR']:
+            fig_hr.update_yaxes(tickformat='.1%')
+        st.plotly_chart(fig_hr, use_container_width=True)
+
+        best_hr = hour_agg.loc[hour_agg[hour_metric].idxmax()]
+        st.info(f"{hour_metric} 최고 시간대: **{int(best_hr['시간'])}시** ({fmt_val(best_hr[hour_metric], hour_metric)})")
+    else:
+        st.caption("발송일자에 시간 정보가 없어 시간대별 분석을 표시할 수 없어요.")
 
 
 # ══ TAB 3: 문구 키워드 분석 ══════════════════════════════════
@@ -602,56 +689,61 @@ with tab4:
 
     st.caption(f"총 {len(df_detail):,}건 | CTR·CR·ROAS는 성과 데이터가 있는 건만 표시")
 
-    # ── 반복 캠페인 성과 추이 ──────────────────────────────────────────────
-    st.markdown('<div class="section-title">🔁 반복 캠페인 성과 추이</div>', unsafe_allow_html=True)
-    st.caption("접두사(MKT_, nBPU_ 등)·날짜·채널을 제거한 핵심 키워드 기준으로 그룹핑")
+    # ── 반복 캠페인 연도별 전년비 ──────────────────────────────────────────────
+    st.markdown('<div class="section-title">🔁 반복 캠페인 연도별 전년비</div>', unsafe_allow_html=True)
+    st.caption("핵심 키워드 기준 그룹핑 | 2개 이상 연도에 걸쳐 발송된 캠페인만 표시")
 
     df['캠페인그룹'] = df['캠페인명'].apply(extract_campaign_group)
-    group_counts = df.groupby('캠페인그룹').size()
-    recurring_groups = sorted(group_counts[group_counts >= 2].index.tolist())
+    df_rec_base = df_with_perf.copy()
+    df_rec_base['캠페인그룹'] = df_rec_base['캠페인명'].apply(extract_campaign_group)
+
+    # 2개 이상 연도에 발송된 그룹만
+    group_yr_counts = df_rec_base.groupby('캠페인그룹')['연도'].nunique()
+    recurring_groups = sorted(group_yr_counts[group_yr_counts >= 2].index.tolist())
 
     if recurring_groups:
         selected_group = st.selectbox("캠페인 그룹 선택", recurring_groups, key='rec_group')
-        df_rec = df[df['캠페인그룹'] == selected_group].dropna(subset=['발송일자']).sort_values('발송일자')
+        df_rec = df_rec_base[df_rec_base['캠페인그룹'] == selected_group]
 
-        with st.expander(f"'{selected_group}' 그룹 캠페인 목록 ({len(df_rec)}건)"):
-            st.dataframe(df_rec[['발송일자', '캠페인명', '채널', '모수']].reset_index(drop=True), hide_index=True)
+        rec_yr = df_rec.groupby('연도').agg(
+            발송건수=('캠페인명', 'count'),
+            평균CTR=('CTR', 'mean'),
+            평균CR=('CR', 'mean'),
+            평균ROAS=('ROAS', 'mean'),
+            총거래액=('거래액', 'sum'),
+            평균모수=('모수', 'mean'),
+        ).reset_index()
+        rec_yr['연도'] = rec_yr['연도'].astype(str)
 
-        metric_rec = st.radio("지표", ['ROAS', 'CTR', 'CR', '모수'], horizontal=True, key='rec_metric')
+        metric_rec = st.radio("지표", ['평균ROAS', '평균CTR', '평균CR', '총거래액', '발송건수'], horizontal=True, key='rec_metric')
         fig_rec = px.line(
-            df_rec, x='발송일자', y=metric_rec, color='채널',
-            markers=True, color_discrete_map=COLORS,
-            labels={'발송일자': '발송일', metric_rec: metric_rec}
+            rec_yr, x='연도', y=metric_rec, markers=True,
+            text=rec_yr[metric_rec].apply(lambda v: fmt_val(v, metric_rec)),
+            labels={'연도': '', metric_rec: metric_rec}
         )
-        if metric_rec in ['CTR', 'CR']:
+        fig_rec.update_traces(mode='lines+markers+text', textposition='top center', line=dict(color='#4C72B0', width=2))
+        fig_rec.update_layout(height=360)
+        if metric_rec in ['평균CTR', '평균CR']:
             fig_rec.update_yaxes(tickformat='.1%')
-            fig_rec.update_traces(mode='lines+markers+text', texttemplate='%{y:.1%}', textposition='top center')
-        elif metric_rec == 'ROAS':
-            fig_rec.update_traces(mode='lines+markers+text', texttemplate='%{y:.1f}%', textposition='top center')
-        else:
-            fig_rec.update_traces(mode='lines+markers+text', texttemplate='%{y:,.0f}', textposition='top center')
-        fig_rec.update_layout(height=400)
         st.plotly_chart(fig_rec, use_container_width=True)
 
-        df_rec_perf = df_rec.dropna(subset=[metric_rec])
-        if len(df_rec_perf) >= 2:
-            first_val = df_rec_perf.iloc[0][metric_rec]
-            last_val = df_rec_perf.iloc[-1][metric_rec]
-            trend = "개선 추세 ↑" if last_val > first_val else "하락 추세 ↓"
+        # 전년비 인사이트
+        years = sorted(rec_yr['연도'].unique())
+        if len(years) >= 2:
+            prev_v = rec_yr[rec_yr['연도'] == years[-2]][metric_rec].values[0]
+            curr_v = rec_yr[rec_yr['연도'] == years[-1]][metric_rec].values[0]
+            diff = curr_v - prev_v
+            arrow = "↑" if diff > 0 else "↓"
             st.info(
-                f"**'{selected_group}'** 첫 발송 {fmt_val(first_val, metric_rec)} → "
-                f"최근 발송 {fmt_val(last_val, metric_rec)} — {trend}"
+                f"**'{selected_group}'** {years[-2]}→{years[-1]} {arrow}  \n"
+                f"{metric_rec}: {fmt_val(prev_v, metric_rec)} → {fmt_val(curr_v, metric_rec)} "
+                f"({'+' if diff > 0 else ''}{fmt_val(diff, metric_rec)} 변동)"
             )
 
-        st.dataframe(
-            df_rec[['발송일자', '채널', '모수', 'CTR', 'CR', 'ROAS', '거래액']].style.format({
-                'CTR': lambda x: f"{x:.1%}" if pd.notna(x) else '-',
-                'CR': lambda x: f"{x:.1%}" if pd.notna(x) else '-',
-                'ROAS': lambda x: f"{x:.1f}%" if pd.notna(x) else '-',
-                '모수': lambda x: f"{int(x):,}" if pd.notna(x) else '-',
-                '거래액': lambda x: f"{int(x):,}" if pd.notna(x) else '-',
-            }),
-            use_container_width=True, hide_index=True
-        )
+        with st.expander(f"'{selected_group}' 연도별 상세"):
+            st.dataframe(rec_yr.style.format({
+                '평균CTR': '{:.1%}', '평균CR': '{:.1%}', '평균ROAS': '{:.1f}%',
+                '총거래액': '{:,.0f}', '평균모수': '{:,.0f}',
+            }), use_container_width=True, hide_index=True)
     else:
-        st.info("2회 이상 발송된 반복 캠페인 그룹이 없습니다.")
+        st.info("2개 이상 연도에 걸쳐 발송된 반복 캠페인 그룹이 없습니다.")
