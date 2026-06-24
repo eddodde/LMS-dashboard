@@ -62,6 +62,8 @@ def load_data(file):
 
     for col in ['모수', 'UV', '고객수', '주문수', '거래액']:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
+    if '비용' in df.columns:
+        df['비용'] = pd.to_numeric(df['비용'].astype(str).str.replace(',', '', regex=False), errors='coerce')
 
     df['채널'] = df['채널'].fillna('LMS').str.upper()
     df['월'] = df['발송일자'].dt.to_period('M').astype(str)
