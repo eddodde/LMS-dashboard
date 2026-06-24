@@ -53,13 +53,11 @@ def load_data(file):
     # 타입 변환
     df['발송일자'] = pd.to_datetime(df['발송일자'], errors='coerce')
 
-    # ROAS: "7095.0%" 형태 → 숫자로
-    df['ROAS'] = df['ROAS'].astype(str).str.replace('%', '', regex=False).str.replace(',', '', regex=False)
-    df['ROAS'] = pd.to_numeric(df['ROAS'], errors='coerce')
+    # ROAS: Excel % 포맷셀 → pandas가 /100으로 읽으므로 ×100 복원
+    df['ROAS'] = pd.to_numeric(df['ROAS'], errors='coerce') * 100
 
-    # CTR, CR도 동일하게 처리
+    # CTR, CR: Excel % 포맷셀 → 소수로 읽힘 (0.135 = 13.5%)
     for col in ['CTR', 'CR']:
-        df[col] = df[col].astype(str).str.replace('%', '', regex=False).str.replace(',', '', regex=False)
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
     for col in ['모수', 'UV', '고객수', '주문수', '거래액']:
