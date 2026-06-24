@@ -190,7 +190,7 @@ with col3:
 with col4:
     st.metric("평균 CR", f"{avg_cr:.2%}" if pd.notna(avg_cr) else "-")
 with col5:
-    st.metric("평균 ROAS", f"{avg_roas:.1f}" if pd.notna(avg_roas) else "-")
+    st.metric("평균 ROAS", f"{avg_roas:.0f}%" if pd.notna(avg_roas) else "-")
 
 st.markdown("")
 
@@ -218,7 +218,7 @@ with tab1:
         st.dataframe(
             ch_perf.style.format({
                 '평균CTR': '{:.2%}', '평균CR': '{:.2%}',
-                '평균ROAS': '{:.1f}', '총거래액': '{:,.0f}',
+                '평균ROAS': '{:.0f}%', '총거래액': '{:,.0f}',
                 '평균모수': '{:,.0f}', '총모수': '{:,.0f}',
                 '발송건수': '{:,}'
             }),
@@ -237,7 +237,7 @@ with tab1:
                 if m in ['평균CTR', '평균CR']:
                     display = f"{val:.2%}"
                 else:
-                    display = f"{val:.1f}"
+                    display = f"{val:.0f}%"
                 fig.add_trace(
                     go.Bar(
                         x=[row['채널']], y=[val],
@@ -250,17 +250,6 @@ with tab1:
                 )
         fig.update_layout(height=320, margin=dict(t=40, b=10), barmode='group')
         st.plotly_chart(fig, use_container_width=True)
-
-    # 채널별 ROAS 분포
-    st.markdown('<div class="section-title">채널별 ROAS 분포</div>', unsafe_allow_html=True)
-    fig_box = px.box(
-        df_with_perf[df_with_perf['ROAS'] < df_with_perf['ROAS'].quantile(0.95)],
-        x='채널', y='ROAS', color='채널',
-        color_discrete_map=colors,
-        points='outliers'
-    )
-    fig_box.update_layout(height=350, showlegend=False)
-    st.plotly_chart(fig_box, use_container_width=True)
 
     # 출처(멤버십/타부서)별 채널 분포
     st.markdown('<div class="section-title">출처별 채널 구성</div>', unsafe_allow_html=True)
@@ -305,10 +294,24 @@ with tab2:
     st.plotly_chart(fig_bar2, use_container_width=True)
 
 
+# ── 키워드 카테고리 분류 ──────────────────────────────────────────────
+KW_CATEGORIES = {
+    '개인화': ['고객명', '이름', '회원님', '고객님', '선생님', '귀하'],
+    '행동기반': ['보셨던', '담으신', '관심', '찜하신', '검색하신', '구매하신', '방문하신', '클릭', '확인하신'],
+    '혜택/할인': ['할인', '쿠폰', '적립', '무료', '특가', '혜택', '증정', '사은품', '캐시백', '포인트', '이벤트', '프로모션'],
+    '긴급/한정': ['마감', '오늘', '지금', '한정', '마지막', '종료', '오늘까지', '곧', '종료임박', '품절'],
+    '시즌': ['겨울', '여름', '봄', '가을', '블랙', '크리스마스', '설날', '추석', '신년', '연말'],
+}
+
+def classify_keyword(kw):
+    for cat, words in KW_CATEGORIES.items():
+        if any(w in kw for w in words):
+            return cat
+    return '상품/기타'
+
+
 # ══ TAB 3: 문구 키워드 분석 ══════════════════════════════════
 with tab3:
-    st.markdown('<div class="section-title">문구 키워드 빈도 분석</div>', unsafe_allow_html=True)
-
     col_a, col_b = st.columns(2)
     with col_a:
         분석채널 = st.selectbox("채널", ['전체'] + sorted(df['채널'].dropna().unique().tolist()), key='kw_ch')
@@ -320,23 +323,47 @@ with tab3:
         df_kw = df_kw[df_kw['채널'] == 분석채널]
 
     kw_all = extract_keywords(df_kw['문구'].tolist(), top_n=top_n)
+
     if kw_all:
         kw_df = pd.DataFrame(kw_all, columns=['키워드', '빈도'])
-        fig_kw = px.bar(kw_df, x='빈도', y='키워드', orientation='h',
-                        color='빈도', color_continuous_scale='Blues')
-        fig_kw.update_layout(height=max(400, top_n * 22), yaxis={'categoryorder': 'total ascending'},
-                              coloraxis_showscale=False)
+        kw_df['카테고리'] = kw_df['키워드'].apply(classify_keyword)
+
+        # 카테고리 필터
+        cat_options = ['전체'] + sorted(kw_df['카테고리'].unique().tolist())
+        선택_카테고리 = st.selectbox("카테고리 필터", cat_options, key='kw_cat')
+        kw_df_view = kw_df if 선택_카테고리 == '전체' else kw_df[kw_df['카테고리'] == 선택_카테고리]
+
+        cat_colors = {
+            '개인화': '#4C72B0', '행동기반': '#DD8452', '혜택/할인': '#55A868',
+            '긴급/한정': '#C44E52', '시즌': '#8172B2', '상품/기타': '#aaaaaa'
+        }
+
+        st.markdown('<div class="section-title">키워드 빈도 (카테고리별 색상)</div>', unsafe_allow_html=True)
+        fig_kw = px.bar(
+            kw_df_view.sort_values('빈도'), x='빈도', y='키워드', orientation='h',
+            color='카테고리', color_discrete_map=cat_colors,
+            text='빈도'
+        )
+        fig_kw.update_layout(height=max(400, len(kw_df_view) * 22), yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig_kw, use_container_width=True)
+
+        # 범례 설명
+        with st.expander("카테고리 기준 보기"):
+            for cat, words in KW_CATEGORIES.items():
+                st.markdown(f"**{cat}**: {', '.join(words)}")
+            st.markdown("**상품/기타**: 위 분류에 해당하지 않는 상품명·소재명 등")
     else:
         st.info("키워드를 추출할 수 있는 문구 데이터가 없습니다.")
 
     # 키워드 × 성과 상관
-    st.markdown('<div class="section-title">주요 키워드 포함 여부에 따른 성과 차이</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">키워드 포함 여부에 따른 성과 차이</div>', unsafe_allow_html=True)
+    st.caption("포함 건수가 적을수록 해당 캠페인 고유 특성일 수 있으므로 해석 시 참고")
 
     if kw_all:
-        top_keywords = [k for k, _ in kw_all[:15]]
+        top_keywords = [k for k, _ in kw_all[:20]]
         kw_perf_rows = []
         df_kw_perf = df_kw.dropna(subset=['CTR', 'CR', 'ROAS', '문구'])
+        total_campaigns = len(df_kw_perf)
 
         for kw in top_keywords:
             mask = df_kw_perf['문구'].str.contains(kw, na=False)
@@ -345,7 +372,9 @@ with tab3:
             if len(has) > 0 and len(no) > 0:
                 kw_perf_rows.append({
                     '키워드': kw,
-                    '포함_건수': len(has),
+                    '카테고리': classify_keyword(kw),
+                    '포함건수': len(has),
+                    '포함비율': len(has) / total_campaigns,
                     '포함_CTR': has['CTR'].mean(),
                     '포함_CR': has['CR'].mean(),
                     '포함_ROAS': has['ROAS'].mean(),
@@ -362,17 +391,34 @@ with tab3:
             metric_kw = st.radio("비교 지표", ['ROAS_리프트', 'CTR_리프트'], horizontal=True)
             kw_perf_df_sorted = kw_perf_df.sort_values(metric_kw, ascending=False)
 
-            fig_lift = px.bar(
-                kw_perf_df_sorted, x='키워드', y=metric_kw,
-                color=metric_kw,
-                color_continuous_scale=['#d9534f', '#f0f0f0', '#4C72B0'],
-                color_continuous_midpoint=0,
-                text=kw_perf_df_sorted[metric_kw].round(2)
+            # 버블 크기 = 포함건수 (흔한 키워드일수록 크게)
+            fig_lift = px.scatter(
+                kw_perf_df_sorted,
+                x='포함비율', y=metric_kw,
+                size='포함건수', color='카테고리',
+                color_discrete_map=cat_colors,
+                text='키워드',
+                hover_data={'포함건수': True, '포함비율': ':.0%',
+                            '포함_ROAS': ':.0f', '미포함_ROAS': ':.0f'},
+                labels={'포함비율': '포함 캠페인 비율 (→ 희귀 ~ 범용)', metric_kw: metric_kw}
             )
             fig_lift.add_hline(y=0, line_dash='dash', line_color='gray')
-            fig_lift.update_layout(height=370, coloraxis_showscale=False,
-                                   title=f"키워드 포함 시 {metric_kw} (양수=포함이 높음)")
+            fig_lift.update_traces(textposition='top center')
+            fig_lift.update_layout(
+                height=480,
+                title="버블 크기 = 포함 건수 | 왼쪽=희귀 키워드, 오른쪽=범용 키워드"
+            )
             st.plotly_chart(fig_lift, use_container_width=True)
+
+            # 상세 테이블
+            with st.expander("상세 수치 보기"):
+                st.dataframe(
+                    kw_perf_df_sorted[['키워드', '카테고리', '포함건수', '포함_ROAS', '미포함_ROAS', 'ROAS_리프트', '포함_CTR', '미포함_CTR', 'CTR_리프트']].style.format({
+                        '포함_ROAS': '{:.0f}%', '미포함_ROAS': '{:.0f}%', 'ROAS_리프트': '{:+.0f}',
+                        '포함_CTR': '{:.2%}', '미포함_CTR': '{:.2%}', 'CTR_리프트': '{:+.2%}',
+                    }),
+                    use_container_width=True, hide_index=True
+                )
 
 
 # ══ TAB 4: 캠페인 상세 ══════════════════════════════════
@@ -407,7 +453,7 @@ with tab4:
         df_detail.drop(columns=['문구']).rename(columns={'문구_미리보기': '문구(미리보기)'}).style.format({
             'CTR': lambda x: f"{x:.2%}" if pd.notna(x) else '-',
             'CR': lambda x: f"{x:.2%}" if pd.notna(x) else '-',
-            'ROAS': lambda x: f"{x:.1f}" if pd.notna(x) else '-',
+            'ROAS': lambda x: f"{x:.0f}%" if pd.notna(x) else '-',
             '모수': lambda x: f"{int(x):,}" if pd.notna(x) else '-',
             '거래액': lambda x: f"{int(x):,}" if pd.notna(x) else '-',
         }),
@@ -422,3 +468,45 @@ with tab4:
         st.text_area("문구 전문", value=row['문구'], height=200)
 
     st.caption(f"총 {len(df_detail):,}건 | CTR·CR·ROAS는 성과 데이터가 있는 건만 표시")
+
+    # ── 반복 캠페인 성과 추이 ──────────────────────────────────────────────
+    st.markdown('<div class="section-title">🔁 반복 캠페인 성과 추이</div>', unsafe_allow_html=True)
+    st.caption("동일 캠페인명이 2회 이상 발송된 경우만 표시")
+
+    # 캠페인명 앞부분(패턴) 기준으로 반복 캠페인 탐지
+    campaign_counts = df.groupby('캠페인명').size()
+    recurring = campaign_counts[campaign_counts >= 2].index.tolist()
+
+    if recurring:
+        selected_campaign = st.selectbox("캠페인 선택", sorted(recurring), key='recurring_camp')
+        df_rec = df[df['캠페인명'] == selected_campaign].dropna(subset=['발송일자']).sort_values('발송일자')
+
+        if len(df_rec) > 0:
+            metric_rec = st.radio("지표", ['ROAS', 'CTR', 'CR', '모수'], horizontal=True, key='rec_metric')
+            fig_rec = px.line(
+                df_rec, x='발송일자', y=metric_rec,
+                markers=True, text=metric_rec,
+                labels={'발송일자': '발송일', metric_rec: metric_rec}
+            )
+            if metric_rec in ['CTR', 'CR']:
+                fig_rec.update_yaxes(tickformat='.2%')
+                fig_rec.update_traces(texttemplate='%{text:.2%}', textposition='top center')
+            elif metric_rec == 'ROAS':
+                fig_rec.update_traces(texttemplate='%{text:.0f}%', textposition='top center')
+            else:
+                fig_rec.update_traces(texttemplate='%{text:,.0f}', textposition='top center')
+            fig_rec.update_layout(height=350)
+            st.plotly_chart(fig_rec, use_container_width=True)
+
+            st.dataframe(
+                df_rec[['발송일자', '채널', '모수', 'CTR', 'CR', 'ROAS', '거래액']].style.format({
+                    'CTR': lambda x: f"{x:.2%}" if pd.notna(x) else '-',
+                    'CR': lambda x: f"{x:.2%}" if pd.notna(x) else '-',
+                    'ROAS': lambda x: f"{x:.0f}%" if pd.notna(x) else '-',
+                    '모수': lambda x: f"{int(x):,}" if pd.notna(x) else '-',
+                    '거래액': lambda x: f"{int(x):,}" if pd.notna(x) else '-',
+                }),
+                use_container_width=True, hide_index=True
+            )
+    else:
+        st.info("2회 이상 발송된 동일 캠페인명이 없습니다.")
