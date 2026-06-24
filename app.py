@@ -38,79 +38,40 @@ st.markdown("""
 
 # ── 데이터 로드 ──────────────────────────────────────────────
 @st.cache_data
-def load_data(file_t, file_m):
-    # 타부서 발송
-    df_t_send = pd.read_excel(file_t, sheet_name="1. 발송", header=3)
-    df_t_send = df_t_send[['구분', '요청부서', '수단', '일시', '캠페인명', '타겟', '내용', '비고', '모수', '비용']].copy()
-    df_t_send.columns = ['구분', '요청부서', '채널', '발송일자', '캠페인명', '타겟', '문구', '비고', '모수', '비용']
-    df_t_send['출처'] = '타부서'
+def load_data(file):
+    df = pd.read_excel(file, sheet_name="Sheet1", header=1)
+    # 컬럼명 정리
+    df = df.rename(columns={
+        '구분': '발송일자',
+        '발송시간대': '시간대',
+        '고객군명': '타겟',
+        '주문금액': '거래액',
+    })
+    df = df.dropna(subset=['캠페인명'])
+    df = df[df['캠페인명'].astype(str).str.startswith('MKT_')]
 
-    # 타부서 성과
-    df_t_perf = pd.read_excel(file_t, sheet_name="2. 성과", header=4)
-    df_t_perf = df_t_perf[['캠페인명', '모수', 'UV', 'CTR', 'CR', '주문금액']].copy()
-    df_t_perf.columns = ['캠페인명', '모수', 'UV', 'CTR', 'CR', '거래액']
-
-    # 타부서 ROAS (Sheet1에서 별도 조회)
-    df_t_roas = pd.read_excel(file_t, sheet_name="Sheet1", header=4)
-    df_t_roas = df_t_roas[['캠페인명', 'ROAS']].dropna(subset=['캠페인명', 'ROAS'])
-    df_t_roas['ROAS'] = pd.to_numeric(df_t_roas['ROAS'], errors='coerce')
-    if df_t_roas['ROAS'].dropna().mean() < 10:
-        df_t_roas['ROAS'] = df_t_roas['ROAS'] * 100
-    df_t_perf = df_t_perf.merge(df_t_roas, on='캠페인명', how='left')
-
-    # 멤버십 발송
-    df_m_send = pd.read_excel(file_m, sheet_name="1. 발송", header=3)
-    df_m_send = df_m_send[['구분', '일시', '캠페인명', '타겟', '내용', '비고', '모수', '비용']].copy()
-    df_m_send.columns = ['구분', '발송일자', '캠페인명', '타겟', '문구', '비고', '모수', '비용']
-    df_m_send['요청부서'] = '마케팅'
-    df_m_send['채널'] = df_m_send['캠페인명'].str.extract(r'_(SMS|LMS|MMS)')[0]
-    df_m_send['채널'] = df_m_send['채널'].fillna('LMS')
-    df_m_send['출처'] = '멤버십'
-
-    # 멤버십 성과
-    df_m_perf = pd.read_excel(file_m, sheet_name="2. 성과", header=3)
-    df_m_perf.columns = range(len(df_m_perf.columns))
-    df_m_perf2 = pd.read_excel(file_m, sheet_name="2. 성과", header=None, skiprows=3)
-    df_m_perf2 = df_m_perf2.iloc[:, [1, 2, 3, 4, 7, 8, 9, 10, 11, 12]]
-    df_m_perf2.columns = ['구분', '발송일자', '캠페인명', '모수', 'UV', 'CTR', '고객수', '주문수', '주문금액', 'CR']
-    df_m_perf2 = df_m_perf2.dropna(subset=['캠페인명'])
-    df_m_perf2 = df_m_perf2[df_m_perf2['캠페인명'].astype(str).str.startswith('MKT_')]
-    df_m_perf2 = df_m_perf2.rename(columns={'주문금액': '거래액'})
-
-    # 멤버십 ROAS (캠페인별 실적 시트에서 별도 조회)
-    df_m_roas = pd.read_excel(file_m, sheet_name="캠페인별 실적", header=6)
-    df_m_roas = df_m_roas[['캠페인명', 'ROAS']].dropna(subset=['캠페인명', 'ROAS'])
-    df_m_roas['ROAS'] = pd.to_numeric(df_m_roas['ROAS'], errors='coerce')
-    if df_m_roas['ROAS'].dropna().mean() < 10:
-        df_m_roas['ROAS'] = df_m_roas['ROAS'] * 100
-    df_m_perf2 = df_m_perf2.merge(df_m_roas, on='캠페인명', how='left')
-
-    send_cols = ['구분', '요청부서', '채널', '발송일자', '캠페인명', '타겟', '문구', '비고', '모수', '비용', '출처']
-    df_t_send = df_t_send.dropna(subset=['캠페인명'])
-    df_m_send = df_m_send.dropna(subset=['캠페인명'])
-    df_send = pd.concat([df_t_send[send_cols], df_m_send[send_cols]], ignore_index=True)
-
-    perf_cols = ['캠페인명', '모수', 'UV', 'CTR', 'CR', '거래액', 'ROAS']
-    df_t_perf = df_t_perf.dropna(subset=['캠페인명'])
-    df_t_perf = df_t_perf[~df_t_perf['캠페인명'].astype(str).str.contains(r'합계|총계|종합|소계|\d{2}년', regex=True)]
-    df_m_perf2 = df_m_perf2[perf_cols]
-    df_perf = pd.concat([df_t_perf[perf_cols], df_m_perf2[perf_cols]], ignore_index=True)
-
-    df = pd.merge(df_send, df_perf, on='캠페인명', how='left', suffixes=('_send', '_perf'))
-    df['모수'] = df['모수_perf'].combine_first(df['모수_send'])
-    df = df.drop(columns=['모수_send', '모수_perf'])
-
+    # 타입 변환
     df['발송일자'] = pd.to_datetime(df['발송일자'], errors='coerce')
-    for col in ['모수', '비용', 'UV', 'CTR', 'CR', '거래액', 'ROAS']:
+
+    # ROAS: "7095.0%" 형태 → 숫자로
+    df['ROAS'] = df['ROAS'].astype(str).str.replace('%', '', regex=False).str.replace(',', '', regex=False)
+    df['ROAS'] = pd.to_numeric(df['ROAS'], errors='coerce')
+
+    # CTR, CR도 동일하게 처리
+    for col in ['CTR', 'CR']:
+        df[col] = df[col].astype(str).str.replace('%', '', regex=False).str.replace(',', '', regex=False)
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    df['문구'] = df['문구'].astype(str).str.strip()
+    for col in ['모수', 'UV', '고객수', '주문수', '거래액']:
+        df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
+
     df['채널'] = df['채널'].fillna('LMS').str.upper()
     df['월'] = df['발송일자'].dt.to_period('M').astype(str)
     df['연도'] = df['발송일자'].dt.year
     요일맵 = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
     df['요일'] = df['발송일자'].dt.dayofweek.map(요일맵)
-    df['시간'] = df['발송일자'].dt.hour
+    df['시간'] = df['시간대'].astype(str).str.extract(r'(\d+)').astype(float)
+    df['문구'] = df['문구'].astype(str).str.strip()
 
     return df
 
@@ -154,20 +115,17 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("**📂 엑셀 파일 업로드**")
-    file_t = st.file_uploader("타부서 요청 LMS 파일", type=["xlsx"], key="file_t")
-    file_m = st.file_uploader("멤버십 LMS 파일", type=["xlsx"], key="file_m")
+    file_upload = st.file_uploader("26년 문자발송건 통합본", type=["xlsx"], key="file_upload")
 
-    if not file_t or not file_m:
-        st.info("두 파일을 모두 업로드하면 대시보드가 로드됩니다.")
+    if not file_upload:
+        st.info("파일을 업로드하면 대시보드가 로드됩니다.")
         st.stop()
 
-    df_raw = load_data(file_t, file_m)
+    df_raw = load_data(file_upload)
 
-    출처_옵션 = ['전체'] + sorted(df_raw['출처'].dropna().unique().tolist())
-    선택_출처 = st.selectbox("📂 구분", 출처_옵션)
     선택_채널 = st.multiselect("📡 채널", ['SMS', 'LMS', 'MMS'], default=['SMS', 'LMS'])
     연도_옵션 = sorted(df_raw['연도'].dropna().unique().tolist(), reverse=True)
-    선택_연도 = st.multiselect("📅 연도", 연도_옵션, default=연도_옵션[:2] if len(연도_옵션) >= 2 else 연도_옵션)
+    선택_연도 = st.multiselect("📅 연도", 연도_옵션, default=연도_옵션)
 
     st.markdown("---")
     st.caption("데이터 기준: 발송일 기준")
@@ -175,8 +133,6 @@ with st.sidebar:
 
 # ── 필터 적용 ──────────────────────────────────────────────
 df = df_raw.copy()
-if 선택_출처 != '전체':
-    df = df[df['출처'] == 선택_출처]
 if 선택_채널:
     df = df[df['채널'].isin(선택_채널)]
 if 선택_연도:
@@ -188,7 +144,7 @@ df_with_perf = df_with_perf[df_with_perf['ROAS'] > 0]
 
 # ── KPI 요약 ──────────────────────────────────────────────
 st.title("📱 문자 발송 성과 분석 대시보드")
-st.markdown(f"**필터**: {선택_출처} | 채널: {', '.join(선택_채널) if 선택_채널 else '전체'} | 연도: {', '.join(map(str, 선택_연도)) if 선택_연도 else '전체'}")
+st.markdown(f"**필터**: 채널: {', '.join(선택_채널) if 선택_채널 else '전체'} | 연도: {', '.join(map(str, 선택_연도)) if 선택_연도 else '전체'}")
 st.markdown("---")
 
 st.markdown('<div class="section-title">📊 전체 현황 요약</div>', unsafe_allow_html=True)
