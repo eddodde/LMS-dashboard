@@ -47,8 +47,13 @@ def load_data(file_t, file_m):
 
     # 타부서 성과
     df_t_perf = pd.read_excel(file_t, sheet_name="2. 성과", header=4)
-    df_t_perf = df_t_perf[['캠페인명', '모수', 'UV', 'CTR', 'CR', '주문금액', 'ROAS']].copy()
-    df_t_perf.columns = ['캠페인명', '모수', 'UV', 'CTR', 'CR', '거래액', 'ROAS']
+    df_t_perf = df_t_perf[['캠페인명', '모수', 'UV', 'CTR', 'CR', '주문금액']].copy()
+    df_t_perf.columns = ['캠페인명', '모수', 'UV', 'CTR', 'CR', '거래액']
+
+    # 타부서 ROAS (Sheet1에서 별도 조회)
+    df_t_roas = pd.read_excel(file_t, sheet_name="Sheet1", header=4)
+    df_t_roas = df_t_roas[['캠페인명', 'ROAS']].dropna(subset=['캠페인명', 'ROAS'])
+    df_t_perf = df_t_perf.merge(df_t_roas, on='캠페인명', how='left')
 
     # 멤버십 발송
     df_m_send = pd.read_excel(file_m, sheet_name="1. 발송", header=3)
@@ -63,11 +68,16 @@ def load_data(file_t, file_m):
     df_m_perf = pd.read_excel(file_m, sheet_name="2. 성과", header=3)
     df_m_perf.columns = range(len(df_m_perf.columns))
     df_m_perf2 = pd.read_excel(file_m, sheet_name="2. 성과", header=None, skiprows=3)
-    df_m_perf2 = df_m_perf2.iloc[:, [1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13]]
-    df_m_perf2.columns = ['구분', '발송일자', '캠페인명', '모수', 'UV', 'CTR', '고객수', '주문수', '주문금액', 'CR', 'ROAS']
+    df_m_perf2 = df_m_perf2.iloc[:, [1, 2, 3, 4, 7, 8, 9, 10, 11, 12]]
+    df_m_perf2.columns = ['구분', '발송일자', '캠페인명', '모수', 'UV', 'CTR', '고객수', '주문수', '주문금액', 'CR']
     df_m_perf2 = df_m_perf2.dropna(subset=['캠페인명'])
     df_m_perf2 = df_m_perf2[df_m_perf2['캠페인명'].astype(str).str.startswith('MKT_')]
     df_m_perf2 = df_m_perf2.rename(columns={'주문금액': '거래액'})
+
+    # 멤버십 ROAS (캠페인별 실적 시트에서 별도 조회)
+    df_m_roas = pd.read_excel(file_m, sheet_name="캠페인별 실적", header=6)
+    df_m_roas = df_m_roas[['캠페인명', 'ROAS']].dropna(subset=['캠페인명', 'ROAS'])
+    df_m_perf2 = df_m_perf2.merge(df_m_roas, on='캠페인명', how='left')
 
     send_cols = ['구분', '요청부서', '채널', '발송일자', '캠페인명', '타겟', '문구', '비고', '모수', '비용', '출처']
     df_t_send = df_t_send.dropna(subset=['캠페인명'])
