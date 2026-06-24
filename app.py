@@ -619,14 +619,14 @@ with tab4:
     with col3:
         sort_asc = st.checkbox("오름차순", value=False)
 
-    display_cols = ['발송일자', '출처', '채널', '요청부서', '캠페인명', '모수', 'CTR', 'CR', 'ROAS', '거래액', '문구']
+    all_display_cols = ['발송일자', '출처', '채널', '요청부서', '캠페인명', '모수', 'CTR', 'CR', 'ROAS', '거래액', '문구']
+    display_cols = [c for c in all_display_cols if c in df.columns]
     df_detail = df[display_cols].copy()
 
     if search:
-        mask = (
-            df_detail['캠페인명'].str.contains(search, na=False, case=False) |
-            df_detail['요청부서'].str.contains(search, na=False, case=False)
-        )
+        mask = df_detail['캠페인명'].str.contains(search, na=False, case=False)
+        if '요청부서' in df_detail.columns:
+            mask |= df_detail['요청부서'].str.contains(search, na=False, case=False)
         df_detail = df_detail[mask]
 
     df_detail = df_detail.sort_values(sort_by, ascending=sort_asc, na_position='last')
