@@ -735,7 +735,11 @@ with tab5:
 
     # AF코드 소스 결정: 'AF코드' 컬럼이 있으면 사용, 없으면 캠페인명 핵심코드로 대체
     if 'AF코드' in df.columns and df['AF코드'].notna().any():
-        df['_분석코드'] = df['AF코드'].astype(str).str.strip()
+        code_series = df['AF코드'].astype(str).str.strip()
+        # 빈칸/NaN은 실제 결측으로 처리 ('nan' 가짜 그룹 방지)
+        df['_분석코드'] = code_series.where(
+            df['AF코드'].notna() & ~code_series.str.lower().isin(['', 'nan', 'none', 'nat'])
+        )
         code_basis = "파일의 'AF코드' 열 기준"
     else:
         df['_분석코드'] = df['캠페인명'].apply(extract_campaign_group)
