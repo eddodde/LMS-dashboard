@@ -107,6 +107,51 @@ def extract_keywords(texts, top_n=30):
     return keyword_counts.most_common(top_n)
 
 
+# ── 가중/풀링 집계 헬퍼 ──────────────────────────────────────────────
+# 비율 지표(CTR·CR·ROAS)를 캠페인별로 단순평균하면 발송규모가 큰 캠페인과
+# 작은 캠페인을 같은 무게로 취급해 왜곡된다. 분모 가중평균·풀링으로 보정한다.
+def w_avg(values, weights):
+    """가중평균 — 비율을 분모(발송규모/클릭수)로 가중."""
+    v = pd.to_numeric(values, errors='coerce')
+    w = pd.to_numeric(weights, errors='coerce')
+    m = v.notna() & w.notna() & (w > 0)
+    tot = w[m].sum()
+    return float((v[m] * w[m]).sum() / tot) if tot > 0 else np.nan
+
+def pooled_roas(frame):
+    """전체 ROAS = Σ거래액 / Σ비용 × 100. 비용은 거래액/ROAS로 역산(단순평균 금지)."""
+    rev = pd.to_numeric(frame['거래액'], errors='coerce')
+    ratio = pd.to_numeric(frame['ROAS'], errors='coerce') / 100.0
+    cost = rev / ratio.where(ratio > 0)
+    m = rev.notna() & cost.notna() & (cost > 0)
+    return float(rev[m].sum() / cost[m].sum() * 100) if cost[m].sum() > 0 else np.nan
+
+def w_cr(g):
+    """CR 가중평균 — 클릭(UV) 가중, 없으면 모수 가중 폴백."""
+    val = w_avg(g['CR'], g['UV'])
+    return val if pd.notna(val) else w_avg(g['CR'], g['모수'])
+
+def perf_by(frame, by):
+    """그룹별 성과 집계. CTR=모수가중, CR=UV가중, ROAS=Σ거래액/Σ비용."""
+    by_cols = list(by) if isinstance(by, (list, tuple)) else [by]
+    cols = by_cols + ['발송건수', '캠페인건수', '평균모수', '평균CTR', '평균CR', '평균ROAS', '총거래액']
+    rows = []
+    for key, g in frame.groupby(by):
+        keys = key if isinstance(key, tuple) else (key,)
+        row = dict(zip(by_cols, keys))
+        n = len(g)
+        row.update({
+            '발송건수': n, '캠페인건수': n,
+            '평균모수': pd.to_numeric(g['모수'], errors='coerce').mean(),
+            '평균CTR': w_avg(g['CTR'], g['모수']),
+            '평균CR': w_cr(g),
+            '평균ROAS': pooled_roas(g),
+            '총거래액': pd.to_numeric(g['거래액'], errors='coerce').sum(),
+        })
+        rows.append(row)
+    return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
+
+
 # ── 사이드바 ──────────────────────────────────────────────
 with st.sidebar:
     st.title("📱 LMS 대시보드")
@@ -149,21 +194,22 @@ st.markdown('<div class="section-title">📊 전체 현황 요약</div>', unsafe
 col1, col2, col3, col4, col5 = st.columns(5)
 total_send = len(df)
 total_reach = df['모수'].sum()
-avg_ctr = df_with_perf['CTR'].mean()
-avg_cr = df_with_perf['CR'].mean()
-avg_roas = df_with_perf['ROAS'].mean()
+avg_ctr = w_avg(df_with_perf['CTR'], df_with_perf['모수'])
+avg_cr = w_cr(df_with_perf)
+avg_roas = pooled_roas(df_with_perf)
 
 with col1:
     st.metric("총 발송 건수", f"{total_send:,}건")
 with col2:
     st.metric("총 발송 모수", f"{total_reach/10000:.1f}만명" if total_reach > 10000 else f"{int(total_reach):,}명")
 with col3:
-    st.metric("평균 CTR", f"{avg_ctr:.1%}" if pd.notna(avg_ctr) else "-")
+    st.metric("전체 CTR", f"{avg_ctr:.1%}" if pd.notna(avg_ctr) else "-")
 with col4:
-    st.metric("평균 CR", f"{avg_cr:.1%}" if pd.notna(avg_cr) else "-")
+    st.metric("전체 CR", f"{avg_cr:.1%}" if pd.notna(avg_cr) else "-")
 with col5:
-    st.metric("평균 ROAS", f"{avg_roas:.1f}%" if pd.notna(avg_roas) else "-")
+    st.metric("전체 ROAS", f"{avg_roas:.1f}%" if pd.notna(avg_roas) else "-")
 
+st.caption("※ CTR·CR은 발송규모 가중평균, ROAS는 Σ거래액÷Σ비용(전체 풀링) 기준 — 캠페인 단순평균이 아닙니다.")
 st.markdown("")
 
 
@@ -227,19 +273,13 @@ with tab1:
 
     if num_years >= 2:
         st.markdown('<div class="section-title">채널 × 연도별 성과 비교 (전년비)</div>', unsafe_allow_html=True)
-        ch_yr = df_with_perf.groupby(['연도', '채널']).agg(
-            발송건수=('캠페인명', 'count'), 평균CTR=('CTR', 'mean'), 평균CR=('CR', 'mean'),
-            평균ROAS=('ROAS', 'mean'), 총거래액=('거래액', 'sum'), 평균모수=('모수', 'mean'),
-        ).reset_index()
+        ch_yr = perf_by(df_with_perf, ['연도', '채널'])
         ch_yr['연도'] = ch_yr['연도'].astype(str)
         x_col, x_label = '연도', ''
         plot_df = ch_yr
     else:
         st.markdown('<div class="section-title">채널 × 월별 성과 비교</div>', unsafe_allow_html=True)
-        plot_df = df_with_perf.groupby(['월', '채널']).agg(
-            발송건수=('캠페인명', 'count'), 평균CTR=('CTR', 'mean'), 평균CR=('CR', 'mean'),
-            평균ROAS=('ROAS', 'mean'), 총거래액=('거래액', 'sum'), 평균모수=('모수', 'mean'),
-        ).reset_index().sort_values('월')
+        plot_df = perf_by(df_with_perf, ['월', '채널']).sort_values('월')
         x_col, x_label = '월', ''
 
     fig_cmp = px.line(
@@ -274,14 +314,7 @@ with tab1:
     # ── 채널별 종합 성과 테이블 ──────────────────────────────────────────────
     st.markdown('<div class="section-title">채널별 종합 성과</div>', unsafe_allow_html=True)
 
-    ch_perf = df_with_perf.groupby('채널').agg(
-        발송건수=('캠페인명', 'count'),
-        평균모수=('모수', 'mean'),
-        평균CTR=('CTR', 'mean'),
-        평균CR=('CR', 'mean'),
-        평균ROAS=('ROAS', 'mean'),
-        총거래액=('거래액', 'sum'),
-    ).reset_index()
+    ch_perf = perf_by(df_with_perf, '채널').drop(columns=['캠페인건수'])
 
     st.dataframe(
         ch_perf.style.format({
@@ -303,14 +336,7 @@ with tab1:
     # ── 월별 시계열 (채널별) ──────────────────────────────────────────────
     st.markdown('<div class="section-title">월별 시계열 추이 (채널별)</div>', unsafe_allow_html=True)
 
-    monthly_ch = df_with_perf.groupby(['월', '채널']).agg(
-        캠페인건수=('캠페인명', 'count'),
-        평균모수=('모수', 'mean'),
-        평균CTR=('CTR', 'mean'),
-        평균CR=('CR', 'mean'),
-        평균ROAS=('ROAS', 'mean'),
-        총거래액=('거래액', 'sum'),
-    ).reset_index().sort_values('월')
+    monthly_ch = perf_by(df_with_perf, ['월', '채널']).sort_values('월')
 
     ts_metric = st.selectbox(
         "지표 선택",
@@ -354,14 +380,7 @@ with tab2:
     st.markdown('<div class="section-title">월별 발송 모수 & 성과 혼합 추이</div>', unsafe_allow_html=True)
     st.caption("막대 = 평균 발송 모수(우축) / 선 = 선택 지표(좌축)")
 
-    monthly_total = df_with_perf.groupby('월').agg(
-        평균모수=('모수', 'mean'),
-        평균CTR=('CTR', 'mean'),
-        평균CR=('CR', 'mean'),
-        평균ROAS=('ROAS', 'mean'),
-        총거래액=('거래액', 'sum'),
-        캠페인건수=('캠페인명', 'count'),
-    ).reset_index().sort_values('월')
+    monthly_total = perf_by(df_with_perf, '월').sort_values('월')
 
     mix_metric = st.selectbox(
         "성과 지표 선택",
@@ -408,13 +427,7 @@ with tab2:
     요일순서 = ['월', '화', '수', '목', '금', '토', '일']
     df_dow = df_with_perf.dropna(subset=['요일'])
     if len(df_dow):
-        dow_agg = df_dow.groupby('요일').agg(
-            캠페인건수=('캠페인명', 'count'),
-            평균CTR=('CTR', 'mean'),
-            평균CR=('CR', 'mean'),
-            평균ROAS=('ROAS', 'mean'),
-            평균모수=('모수', 'mean'),
-        ).reindex(요일순서).reset_index()
+        dow_agg = perf_by(df_dow, '요일').set_index('요일').reindex(요일순서).reset_index()
 
         dow_metric = st.radio("요일별 지표", ['평균CTR', '평균CR', '평균ROAS', '캠페인건수'], horizontal=True, key='dow_m')
         fig_dow = px.line(
@@ -440,12 +453,7 @@ with tab2:
     df_hour = df_with_perf.dropna(subset=['시간'])
     if len(df_hour) and df_hour['시간'].nunique() > 1:
         st.markdown('<div class="section-title">시간대별 평균 성과</div>', unsafe_allow_html=True)
-        hour_agg = df_hour.groupby('시간').agg(
-            캠페인건수=('캠페인명', 'count'),
-            평균CTR=('CTR', 'mean'),
-            평균CR=('CR', 'mean'),
-            평균ROAS=('ROAS', 'mean'),
-        ).reset_index().sort_values('시간')
+        hour_agg = perf_by(df_hour, '시간').sort_values('시간')
 
         hour_metric = st.radio("시간대별 지표", ['평균CTR', '평균CR', '평균ROAS', '캠페인건수'], horizontal=True, key='hour_m')
         fig_hr = px.line(
@@ -487,16 +495,16 @@ with tab3:
     cat_rows = []
     for _, row in df_kw_perf.iterrows():
         for cat in get_text_categories(row['문구']):
-            cat_rows.append({'카테고리': cat, 'CTR': row['CTR'], 'CR': row['CR'], 'ROAS': row['ROAS']})
+            cat_rows.append({
+                '카테고리': cat, 'CTR': row['CTR'], 'CR': row['CR'], 'ROAS': row['ROAS'],
+                '모수': row['모수'], 'UV': row['UV'], '거래액': row['거래액'],
+            })
 
     if cat_rows:
         cat_perf_df = pd.DataFrame(cat_rows)
-        cat_agg = cat_perf_df.groupby('카테고리').agg(
-            캠페인수=('CTR', 'count'),
-            평균CTR=('CTR', 'mean'),
-            평균CR=('CR', 'mean'),
-            평균ROAS=('ROAS', 'mean'),
-        ).reset_index()
+        cat_agg = perf_by(cat_perf_df, '카테고리').rename(columns={'캠페인건수': '캠페인수'})[
+            ['카테고리', '캠페인수', '평균CTR', '평균CR', '평균ROAS']
+        ]
 
         cat_metric = st.radio("비교 지표", ['평균ROAS', '평균CTR', '평균CR'], horizontal=True, key='cat_m')
         cat_sorted = cat_agg.sort_values(cat_metric, ascending=False)
@@ -561,14 +569,15 @@ with tab3:
             has = df_kw_perf[mask]
             no  = df_kw_perf[~mask]
             if len(has) > 0 and len(no) > 0:
+                has_roas, no_roas = pooled_roas(has), pooled_roas(no)
                 kw_perf_rows.append({
                     '키워드': kw,
                     '카테고리': classify_keyword(kw),
                     '포함건수': len(has),
-                    'ROAS_리프트': has['ROAS'].mean() - no['ROAS'].mean(),
-                    'CTR_리프트': has['CTR'].mean() - no['CTR'].mean(),
-                    '포함_ROAS': has['ROAS'].mean(),
-                    '미포함_ROAS': no['ROAS'].mean(),
+                    'ROAS_리프트': has_roas - no_roas,
+                    'CTR_리프트': w_avg(has['CTR'], has['모수']) - w_avg(no['CTR'], no['모수']),
+                    '포함_ROAS': has_roas,
+                    '미포함_ROAS': no_roas,
                 })
         if kw_perf_rows:
             kw_perf_df = pd.DataFrame(kw_perf_rows)
@@ -675,14 +684,7 @@ with tab4:
         selected_group = st.selectbox("캠페인 그룹 선택", recurring_groups, key='rec_group')
         df_rec = df_rec_base[df_rec_base['캠페인그룹'] == selected_group]
 
-        rec_agg = df_rec.groupby(x_col_rec).agg(
-            발송건수=('캠페인명', 'count'),
-            평균CTR=('CTR', 'mean'),
-            평균CR=('CR', 'mean'),
-            평균ROAS=('ROAS', 'mean'),
-            총거래액=('거래액', 'sum'),
-            평균모수=('모수', 'mean'),
-        ).reset_index()
+        rec_agg = perf_by(df_rec, x_col_rec)
         if x_col_rec == '연도':
             rec_agg['연도'] = rec_agg['연도'].astype(str)
         else:
