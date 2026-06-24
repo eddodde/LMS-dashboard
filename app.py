@@ -38,20 +38,20 @@ st.markdown("""
 
 # ── 데이터 로드 ──────────────────────────────────────────────
 @st.cache_data
-def load_data():
+def load_data(file_t, file_m):
     # 타부서 발송
-    df_t_send = pd.read_excel("26년_타_부서_요청_LMS_발송_건.xlsx", sheet_name="1. 발송", header=3)
+    df_t_send = pd.read_excel(file_t, sheet_name="1. 발송", header=3)
     df_t_send = df_t_send[['구분', '요청부서', '수단', '일시', '캠페인명', '타겟', '내용', '비고', '모수', '비용']].copy()
     df_t_send.columns = ['구분', '요청부서', '채널', '발송일자', '캠페인명', '타겟', '문구', '비고', '모수', '비용']
     df_t_send['출처'] = '타부서'
 
     # 타부서 성과
-    df_t_perf = pd.read_excel("26년_타_부서_요청_LMS_발송_건.xlsx", sheet_name="2. 성과", header=4)
+    df_t_perf = pd.read_excel(file_t, sheet_name="2. 성과", header=4)
     df_t_perf = df_t_perf[['캠페인명', '모수', 'UV', 'CTR', 'CR', '주문금액', 'ROAS']].copy()
     df_t_perf.columns = ['캠페인명', '모수', 'UV', 'CTR', 'CR', '거래액', 'ROAS']
 
     # 멤버십 발송
-    df_m_send = pd.read_excel("26년_멤버십_LMS_발송_건.xlsx", sheet_name="1. 발송", header=3)
+    df_m_send = pd.read_excel(file_m, sheet_name="1. 발송", header=3)
     df_m_send = df_m_send[['구분', '일시', '캠페인명', '타겟', '내용', '비고', '모수', '비용']].copy()
     df_m_send.columns = ['구분', '발송일자', '캠페인명', '타겟', '문구', '비고', '모수', '비용']
     df_m_send['요청부서'] = '마케팅'
@@ -61,11 +61,11 @@ def load_data():
     df_m_send['출처'] = '멤버십'
 
     # 멤버십 성과
-    df_m_perf = pd.read_excel("26년_멤버십_LMS_발송_건.xlsx", sheet_name="2. 성과", header=3)
+    df_m_perf = pd.read_excel(file_m, sheet_name="2. 성과", header=3)
     # 실제 데이터 시작 row 찾기 (구분 컬럼이 숫자인 행)
     df_m_perf.columns = range(len(df_m_perf.columns))
     # header row가 row index 3이므로 실제 데이터 파싱
-    df_m_perf2 = pd.read_excel("26년_멤버십_LMS_발송_건.xlsx", sheet_name="2. 성과", header=None, skiprows=3)
+    df_m_perf2 = pd.read_excel(file_m, sheet_name="2. 성과", header=None, skiprows=3)
     # 컬럼 정렬: 1=구분, 2=발송일자, 3=캠페인명, 4=모수, 7=UV, 8=CTR, 9=고객수, 10=주문수, 11=주문금액, 12=CR, 13=ROAS
     df_m_perf2 = df_m_perf2.iloc[:, [1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13]]
     df_m_perf2.columns = ['구분', '발송일자', '캠페인명', '모수', 'UV', 'CTR', '고객수', '주문수', '주문금액', 'CR', 'ROAS']
@@ -130,7 +130,15 @@ with st.sidebar:
     st.title("📱 LMS 대시보드")
     st.markdown("---")
 
-    df_raw = load_data()
+    st.markdown("**📂 엑셀 파일 업로드**")
+    file_t = st.file_uploader("타부서 요청 LMS 파일", type=["xlsx"], key="file_t")
+    file_m = st.file_uploader("멤버십 LMS 파일", type=["xlsx"], key="file_m")
+
+    if not file_t or not file_m:
+        st.info("두 파일을 모두 업로드하면 대시보드가 로드됩니다.")
+        st.stop()
+
+    df_raw = load_data(file_t, file_m)
 
     출처_옵션 = ['전체'] + sorted(df_raw['출처'].dropna().unique().tolist())
     선택_출처 = st.selectbox("📂 구분", 출처_옵션)
