@@ -682,6 +682,34 @@ def mixed_chart(agg, x_col, perf_metric, vol_col='총모수', vol_label='총 발
     return fig
 
 
+# 지표별 '쏠림'을 볼 분자 (CR=주문수, CTR=클릭, ROAS·1인당·객단가=거래액)
+_CONC_NUM = {'평균CR': '주문수', '평균CTR': 'UV', '평균ROAS': '거래액',
+             '1인당거래액': '거래액', '객단가': '거래액'}
+
+def concentration_warning(raw, group_col, metric, label_fmt, min_share=40):
+    """효율 최고 구간의 성과가 한 캠페인에 쏠려 있으면 경고 문구(아니면 None)."""
+    num_col = _CONC_NUM.get(metric)
+    if not num_col or num_col not in raw.columns or '캠페인명' not in raw.columns:
+        return None
+    agg = perf_by(raw, group_col)
+    agg = agg[agg['발송건수'] >= MIN_SLOT_N].dropna(subset=[metric]) if '발송건수' in agg else agg.dropna(subset=[metric])
+    if not len(agg):
+        return None
+    top_slot = agg.loc[agg[metric].idxmax(), group_col]
+    sub = raw[raw[group_col] == top_slot]
+    num = pd.to_numeric(sub[num_col], errors='coerce')
+    tot = num.sum()
+    if not (tot > 0) or num.notna().sum() == 0:
+        return None
+    ti = num.idxmax()
+    share = num.loc[ti] / tot * 100
+    if share >= min_share:
+        camp = str(sub.loc[ti, '캠페인명'])
+        return (f"⚠️ **{label_fmt(top_slot)}** {metric}의 약 **{share:.0f}%가 '{camp[:26]}' 1건**에서 나옴 — "
+                f"{group_col} 자체 효과라기보다 그 캠페인이 끌어올린 값. 대표성에 주의하세요.")
+    return None
+
+
 def insight_volume_perf(agg, x_col, metric, label_fmt):
     """효율 최고 구간이 '물량' 때문인지 '효율' 때문인지 구분해주는 인사이트."""
     d = agg.dropna(subset=[metric])
@@ -835,6 +863,9 @@ elif nav == "📅 월별 트렌드":
     )
     st.plotly_chart(mixed_chart(monthly_total, '월', mix_metric), use_container_width=True)
     st.info(insight_volume_perf(monthly_total, '월', mix_metric, lambda x: f"{x}"))
+    _cw = concentration_warning(df_with_perf, '월', mix_metric, lambda x: f"{x}")
+    if _cw:
+        st.warning(_cw)
 
     # ── 요일별 성과 (혼합: 막대=발송모수 / 선=효율) ──────────────────────────────
     sec_title('요일별 성과 (발송량 vs 효율)', 'p2-dow')
@@ -847,6 +878,9 @@ elif nav == "📅 월별 트렌드":
         dow_metric = st.radio("요일별 효율 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='dow_m')
         st.plotly_chart(mixed_chart(dow_agg, '요일', dow_metric), use_container_width=True)
         st.info(insight_volume_perf(dow_agg, '요일', dow_metric, lambda x: f"{x}요일"))
+        _cw = concentration_warning(df_dow, '요일', dow_metric, lambda x: f"{x}요일")
+        if _cw:
+            st.warning(_cw)
         with st.expander("📌 요일별 — 그 요일에 보낸 캠페인 보기"):
             dow_opts = [d for d in 요일순서 if d in df_dow['요일'].unique()]
             sel_dow = st.selectbox("요일 선택", dow_opts, key='dow_drill')
@@ -865,6 +899,9 @@ elif nav == "📅 월별 트렌드":
         hour_metric = st.radio("시간대별 효율 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='hour_m')
         st.plotly_chart(mixed_chart(hour_agg, '시간', hour_metric), use_container_width=True)
         st.info(insight_volume_perf(hour_agg, '시간', hour_metric, lambda x: f"{x}"))
+        _cw = concentration_warning(df_hour, '시간', hour_metric, lambda x: f"{int(x)}시")
+        if _cw:
+            st.warning(_cw)
         with st.expander("📌 시간대별 — 그 시간에 보낸 캠페인 보기 (효율 교란 확인용)"):
             hr_opts = sorted(int(h) for h in df_hour['시간'].dropna().unique())
             sel_hr = st.selectbox("시간 선택", hr_opts, format_func=lambda h: f"{h}시", key='hour_drill')
