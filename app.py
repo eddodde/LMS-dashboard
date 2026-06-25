@@ -458,6 +458,27 @@ def get_text_categories(text):
             cats.append(cat)
     return cats if cats else ['상품/기타']
 
+def message_checklist(text):
+    """문구 체크리스트 — (항목, 충족여부, 부족시 가이드). 컴플라이언스+구성 점검."""
+    t = str(text)
+    has_optout = bool(re.search(r'무료\s*수신거부|수신거부|080[\s-]?\d', t))
+    has_cta = bool(re.search(r'bit\.ly|https?://|▷|▶|→|지금|확인|받기|구매|쇼핑|바로가기|클릭', t))
+    has_personal = ('[고객명]' in t or '고객명' in t or '고객님' in t or '회원님' in t)
+    return [
+        ("(광고) 표기", t.strip().startswith('(광고') or '(광고)' in t[:15],
+         "광고성 문자는 맨 앞에 **(광고)** 표기 — 법적 필수"),
+        ("무료수신거부 안내", has_optout,
+         "**무료수신거부 080-…** 문구 — 광고성 문자 법적 필수"),
+        ("혜택/할인 요소", any(w in t for w in KW_CATEGORIES['혜택/할인']),
+         "할인·쿠폰·적립 등 **구체적 혜택**을 한 줄로 (과거 고성과 요소)"),
+        ("긴급/한정 요소", any(w in t for w in KW_CATEGORIES['긴급/한정']),
+         "**마감·오늘·한정·선착순** 등 행동을 미루지 않게"),
+        ("CTA/링크", has_cta,
+         "**▷ 지금 확인 / 링크** 등 다음 행동을 명확히"),
+        ("개인화", has_personal,
+         "**[고객명]·고객님** 등 개인화 호칭 (클릭률에 도움)"),
+    ]
+
 def extract_campaign_group(name):
     s = str(name)
     s = re.sub(r'^(MKT_|nBPU_|BPU_|NBPU_)', '', s, flags=re.IGNORECASE)
@@ -1301,10 +1322,37 @@ elif nav == "🔤 문구 키워드 분석":
             # ── 개선 제안 + 잘 나간 예시 문구 (과거 데이터 기반, AI 창작 아님) ──
             st.markdown("**💡 개선 제안 & 추천 문구**")
             st.caption(
-                "입력 문구를 과거 데이터와 비교해 ① **추가하면 좋을 요소**(과거 성과 높았는데 지금 문구엔 없는 것), "
-                "② **다시 볼 요소**(들어있지만 과거 성과 낮았던 것), "
-                "③ **비슷한 유형에서 실제로 잘 나간 문구**를 보여줍니다. 아래 항목을 참고해 문구를 다듬어 보세요."
+                "입력 문구를 과거 데이터·규칙과 비교해 ① **체크리스트**(빠진 필수·고성과 요소), "
+                "② **넣어볼 키워드**, ③ **다시 볼 요소**, ④ **잘 나간 실제 문구**를 보여줍니다."
             )
+
+            # ① 문구 체크리스트 (컴플라이언스 + 구성)
+            checks = message_checklist(diag_txt)
+            ok = sum(1 for _, passed, _ in checks if passed)
+            st.markdown(f"**① 문구 체크리스트 ({ok}/{len(checks)})**")
+            for label, passed, guide in checks:
+                if passed:
+                    st.markdown(f"- ✅ {label}")
+                else:
+                    st.markdown(f"- ⚠️ **{label}** 빠짐 — {guide}")
+            _chars = len(str(diag_txt).strip())
+            if _chars > 1000:
+                st.caption(f"길이 {_chars}자 — LMS 권장(한글 약 1,000자)을 넘어 MMS 비용/분할 발송 가능성. 핵심만 남기기 검토.")
+
+            # ② 넣어볼 키워드 (과거 ROAS 리프트 높고 지금 문구에 없는 것)
+            if len(kw_perf_all):
+                add_kw = kw_perf_all[
+                    (kw_perf_all['포함건수'] >= MIN_KW_CASES) &
+                    (kw_perf_all['ROAS리프트'] > 0)
+                ].sort_values('ROAS리프트', ascending=False)
+                add_kw = [r for _, r in add_kw.iterrows() if r['키워드'] not in str(diag_txt)][:3]
+                if add_kw:
+                    st.markdown("**② 넣어볼 키워드** (과거 성과 ↑, 지금 문구엔 없음)")
+                    for r in add_kw:
+                        st.markdown(f"- **'{r['키워드']}'** ({r['카테고리']}) — 과거 ROAS {r['ROAS리프트']:+,.0f}%p, {int(r['포함건수'])}건")
+                    st.caption("⚠️ 상관 기반 참고 — 맥락에 맞을 때만 넣으세요.")
+
+            st.markdown("**③ 다시 볼 요소 / 추가 카테고리**")
             cat_perf = {}
             for c in KW_CATEGORIES:
                 if c in ('상품/기타', '개인화'):
@@ -1331,10 +1379,10 @@ elif nav == "🔤 문구 키워드 분석":
 
             ref = sim.sort_values('ROAS', ascending=False).head(3)
             if len(ref):
-                st.markdown("**참고 — 비슷한 유형에서 잘 나간 실제 문구 (ROAS 상위):**")
+                st.markdown("**④ 비슷한 유형에서 잘 나간 실제 문구 (ROAS 상위)**")
                 for _, r in ref.iterrows():
                     st.markdown(f"- **ROAS {r['ROAS']:.0f}%** · {str(r['문구'])[:110]}")
-            st.caption("※ 과거 발송 데이터 기반 제안이지 AI가 새로 쓴 문구는 아닙니다. 실제 적용 전 A/B로 검증 권장.")
+            st.caption("※ 과거 발송 데이터·규칙 기반 제안입니다. 실제 적용 전 (광고)표기·무료수신거부 확인 + A/B 검증 권장.")
 
         # ── 🤖 AI 문구 개선 (Claude Haiku) — 키 있을 때만 / 하루 제한 ──────────────
         st.markdown("---")
