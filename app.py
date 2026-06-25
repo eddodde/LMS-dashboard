@@ -245,6 +245,19 @@ with st.sidebar:
     선택_연도 = st.multiselect("📅 연도", 연도_옵션, default=연도_옵션)
 
     st.markdown("---")
+    PAGES = ["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석",
+             "🗂 캠페인 상세", "🏷 AF코드별 효율", "⚖️ A vs B 비교"]
+    PAGE_DESC = {
+        "📡 채널별 분석": "채널 효율 비교 · 종합성과 · 일자별 추이",
+        "📅 월별 트렌드": "월별 추이 · 요일/시간대 · 요일×시간 히트맵",
+        "🔤 문구 키워드 분석": "카테고리 성과 · 키워드 빈도/리프트 · 문구 진단",
+        "🗂 캠페인 상세": "전체 캠페인 표 · 반복 캠페인 추이",
+        "🏷 AF코드별 효율": "AF코드(캠페인)별 효율 · 타겟vs거래액",
+        "⚖️ A vs B 비교": "두 항목 효율 나란히 비교",
+    }
+    nav = st.radio("📂 분석 메뉴", PAGES, key='nav')
+    st.caption(PAGE_DESC.get(nav, ""))
+    st.markdown("---")
     st.caption("데이터 기준: 발송일 기준")
 
 
@@ -654,14 +667,9 @@ def insight_volume_perf(agg, x_col, metric, label_fmt):
     return "  \n".join(parts)
 
 
-# ── 탭 구성 ──────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석", "🗂 캠페인 상세", "🏷 AF코드별 효율", "⚖️ A vs B 비교"]
-)
-
-
-# ══ TAB 1: 채널별 분석 ══════════════════════════════════
-with tab1:
+# ── 페이지 라우팅 (사이드바 메뉴로 전환) ──────────────────────────────────────────────
+# ══ 채널별 분석 ══════════════════════════════════
+if nav == "📡 채널별 분석":
 
     # ── 채널별 효율 비교 (연도 2개↑: 전년비 / 1개: 월별) ──────────────────────────────────────────────
     num_years = df_with_perf['연도'].nunique()
@@ -763,8 +771,8 @@ with tab1:
             st.caption("일자별 데이터가 부족합니다.")
 
 
-# ══ TAB 2: 월별 트렌드 ══════════════════════════════════
-with tab2:
+# ══ 월별 트렌드 ══════════════════════════════════
+elif nav == "📅 월별 트렌드":
     st.markdown('<div class="section-title">월별 발송량 vs 효율 추이</div>', unsafe_allow_html=True)
     st.caption("회색 막대 = 총 발송모수(우축) / 파란 선 = 효율 지표(좌축)")
 
@@ -848,8 +856,8 @@ with tab2:
             )
 
 
-# ══ TAB 3: 문구 키워드 분석 ══════════════════════════════════
-with tab3:
+# ══ 문구 키워드 분석 ══════════════════════════════════
+elif nav == "🔤 문구 키워드 분석":
     col_a, col_b = st.columns(2)
     with col_a:
         분석채널 = st.selectbox("채널", ['전체'] + sorted(df['채널'].dropna().unique().tolist()), key='kw_ch')
@@ -1101,8 +1109,8 @@ with tab3:
             st.caption("과거 데이터에 매칭되는 키워드가 없어요. (신규 표현이거나 상품명 위주 문구)")
 
 
-# ══ TAB 4: 캠페인 상세 ══════════════════════════════════
-with tab4:
+# ══ 캠페인 상세 ══════════════════════════════════
+elif nav == "🗂 캠페인 상세":
     st.markdown('<div class="section-title">캠페인별 상세 데이터</div>', unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -1238,8 +1246,8 @@ with tab4:
         st.info(f"{msg} 걸쳐 발송된 반복 캠페인 그룹이 없습니다.")
 
 
-# ══ TAB 5: AF코드별 효율 ══════════════════════════════════
-with tab5:
+# ══ AF코드별 효율 ══════════════════════════════════
+elif nav == "🏷 AF코드별 효율":
     st.markdown('<div class="section-title">AF코드별 효율 비교</div>', unsafe_allow_html=True)
 
     # 제공된 고정 AF코드(AF_MAP)만 집계. 같은 캠페인명 코드(EV20·EV21=승급유도)는 묶는다.
@@ -1362,8 +1370,8 @@ with tab5:
             )
 
 
-# ══ TAB 6: A vs B 비교 ══════════════════════════════════
-with tab6:
+# ══ A vs B 비교 ══════════════════════════════════
+elif nav == "⚖️ A vs B 비교":
     st.markdown('<div class="section-title">캠페인 비교 (A vs B)</div>', unsafe_allow_html=True)
     st.caption("기준을 정하고 두 항목을 골라 효율을 나란히 비교 — 요금제 비교처럼 어느 쪽이 더 나은지 한눈에")
 
