@@ -1495,17 +1495,27 @@ st.components.v1.html(
     """
     <script>
     const doc = window.parent.document;
+    function getScroller(){
+      const cands = [doc.scrollingElement,
+                     doc.querySelector('section.main'),
+                     doc.querySelector('[data-testid="stMain"]'),
+                     doc.querySelector('[data-testid="stAppViewContainer"]'),
+                     doc.documentElement, doc.body];
+      for(const c of cands){ if(c && c.scrollHeight > c.clientHeight + 5) return c; }
+      return doc.scrollingElement || doc.documentElement;
+    }
     function spy(){
       const titles = Array.from(doc.querySelectorAll('.section-title')).filter(t => t.id);
       if(!titles.length) return;
-      const vh = window.parent.innerHeight || 800;
       let active = titles[0].id;
       for(const t of titles){
         if(t.getBoundingClientRect().top <= 140) active = t.id;
       }
-      // 마지막 섹션은 페이지 끝이라 맨 위까지 못 올라감 → 화면 상단부에 들어오면 활성 처리
-      const last = titles[titles.length - 1];
-      if(last.getBoundingClientRect().top < vh * 0.5) active = last.id;
+      // 페이지 끝까지 스크롤되면(마지막 섹션은 맨 위까지 못 올라감) 마지막 섹션 활성
+      const se = getScroller();
+      if(se && se.scrollTop + se.clientHeight >= se.scrollHeight - 8){
+        active = titles[titles.length - 1].id;
+      }
       doc.querySelectorAll('a.subnav-link').forEach(a=>{
         const on = a.getAttribute('href') === '#'+active;
         a.style.textDecoration = on ? 'underline' : 'none';
