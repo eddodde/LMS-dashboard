@@ -91,6 +91,10 @@ _KW_STOP = {
     '을', '를', '은', '는', '이', '가', '의', '에', '도', '만', '과', '와', '로', '께', '요',
     '지금', '오직', '다시', '바로', '모든', '각종', '다양', '특별', '새로운', '이번', '오늘',
     '경우', '관련', '대한', '통해', '위한', '위해', '정도', '준비', '시작', '진행', '대상',
+    # 동사·형용사 조각 (의미 없는 토큰)
+    '확인해보세', '확인해', '있는', '있어', '있습', '없는', '없어', '되는', '하는', '드리는',
+    '만나', '만나보', '담아', '담긴', '놓치', '챙기', '누리', '드세', '받기', '보기', '오는',
+    '초특',  # '초특가'는 normalize에서 처리, 잘린 조각은 제외
     # 너무 범용적인 단어
     '상품', '구매', '주문', '배송', '서비스', '사이트', '페이지', '쇼핑', '혜택가',
 }
@@ -99,12 +103,15 @@ _KW_NORMALIZE = {
     '고객님만': '고객님', '고객님께': '고객님', '고객님을': '고객님', '고객님이': '고객님',
     '보셨던': '관심상품', '담으셨던': '관심상품', '찜하셨던': '관심상품',
     '담으신': '관심상품', '찜하신': '관심상품', '관심상품': '관심상품',
-    '할인가': '할인', '특가': '할인', '세일': '할인', '할인율': '할인',
+    '할인가': '할인', '특가': '할인', '세일': '할인', '할인율': '할인', '초특가': '할인',
     '오늘까지': '마감임박', '오늘만': '마감임박', '종료임박': '마감임박', '마감임박': '마감임박',
     '쿠폰을': '쿠폰', '쿠폰이': '쿠폰', '적립금': '적립',
 }
 _KW_PARTICLE_TAILS = ('으로', '에서', '까지', '부터', '에게', '이라', '이나', '만큼', '처럼', '한테', '이신', '으신')
 _KW_JOSA = set('을를은는이가의에도만과와로께요')
+# 동사·어미로 끝나는 토큰은 키워드가 아니므로 제외
+_KW_BAD_TAILS = ('보세', '하세', '으세', '해요', '어요', '아요', '에요', '니다', '습니', '드려',
+                 '드리', '하기', '되기', '하실', '하면', '있는', '없는', '하는', '되는', '있어', '없어')
 
 def _trim_particle(w):
     """끝에 붙은 조사/어미를 보수적으로 제거해 같은 단어를 하나로 모은다."""
@@ -114,6 +121,10 @@ def _trim_particle(w):
     if len(w) >= 3 and w[-1] in _KW_JOSA:
         return w[:-1]
     return w
+
+def _is_noise_token(w):
+    """동사·어미로 끝나는 비(非)키워드 토큰인지."""
+    return any(w.endswith(t) for t in _KW_BAD_TAILS)
 
 
 @st.cache_data
@@ -129,10 +140,10 @@ def extract_keywords(texts, top_n=30):
         words = re.findall(r'[가-힣]{2,6}', text)
         for w in words:
             w = _trim_particle(w)
-            if w in stop or len(w) < 2:
+            if w in stop or len(w) < 2 or _is_noise_token(w):
                 continue
             w = normalize.get(w, w)
-            if w in stop:
+            if w in stop or _is_noise_token(w):
                 continue
             keyword_counts[w] += 1
     return keyword_counts.most_common(top_n)
@@ -166,9 +177,9 @@ def perf_by(frame, by):
     """그룹별 성과 집계. CTR=모수가중, CR=UV가중, ROAS=Σ거래액/Σ비용.
     거래액은 총액뿐 아니라 캠페인당·1인당으로도 제공(효율 비교용)."""
     by_cols = list(by) if isinstance(by, (list, tuple)) else [by]
-    cols = by_cols + ['발송건수', '캠페인건수', '평균모수', '총모수',
+    cols = by_cols + ['발송건수', '캠페인건수', '평균모수', '총모수', '총고객수',
                       '평균CTR', '평균CR', '평균ROAS',
-                      '총거래액', '캠페인당거래액', '1인당거래액']
+                      '총거래액', '캠페인당거래액', '1인당거래액', '객단가']
     rows = []
     for key, g in frame.groupby(by):
         keys = key if isinstance(key, tuple) else (key,)
@@ -176,16 +187,19 @@ def perf_by(frame, by):
         n = len(g)
         sends = pd.to_numeric(g['모수'], errors='coerce').sum()
         rev = pd.to_numeric(g['거래액'], errors='coerce').sum()
+        buyers = pd.to_numeric(g['고객수'], errors='coerce').sum() if '고객수' in g else np.nan
         row.update({
             '발송건수': n, '캠페인건수': n,
             '평균모수': pd.to_numeric(g['모수'], errors='coerce').mean(),
             '총모수': sends,
+            '총고객수': buyers,
             '평균CTR': w_avg(g['CTR'], g['모수']),
             '평균CR': w_cr(g),
             '평균ROAS': pooled_roas(g),
             '총거래액': rev,
             '캠페인당거래액': rev / n if n else np.nan,
-            '1인당거래액': rev / sends if sends and sends > 0 else np.nan,
+            '1인당거래액': rev / sends if sends and sends > 0 else np.nan,   # 발송모수(타겟) 1명당
+            '객단가': rev / buyers if buyers and buyers > 0 else np.nan,      # 구매고객 1명당
         })
         rows.append(row)
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
@@ -328,7 +342,7 @@ def extract_campaign_group(name):
     parts = [p for p in s.split('_') if p]
     return parts[0] if parts else s
 
-MONEY_METRICS = {'총거래액', '캠페인당거래액', '1인당거래액', '거래액', '평균거래액', '총비용'}
+MONEY_METRICS = {'총거래액', '캠페인당거래액', '1인당거래액', '객단가', '거래액', '평균거래액', '총비용'}
 
 def fmt_val(v, metric):
     if pd.isna(v):
@@ -376,6 +390,23 @@ def insight_channel_compare(base, plot_df, x_col, metric, num_years):
     return "  \n".join(parts)
 
 
+def reallocation_gain(ch, share=0.2):
+    """저효율 채널 모수의 일부를 고효율 채널로 옮길 때 기대 거래액 증가(동일 효율 가정)."""
+    d = ch.dropna(subset=['1인당거래액', '총모수'])
+    d = d[d['총모수'] > 0]
+    if len(d) < 2:
+        return None
+    hi = d.loc[d['1인당거래액'].idxmax()]
+    lo = d.loc[d['1인당거래액'].idxmin()]
+    if hi['채널'] == lo['채널'] or hi['1인당거래액'] <= lo['1인당거래액']:
+        return None
+    move = share * lo['총모수']
+    gain = move * (hi['1인당거래액'] - lo['1인당거래액'])
+    total_rev = d['총거래액'].sum()
+    pct = gain / total_rev * 100 if total_rev else 0
+    return dict(lo=lo['채널'], hi=hi['채널'], move=move, gain=gain, pct=pct, share=share)
+
+
 def insight_channel_table(ch):
     ch = ch.dropna(subset=['평균ROAS'])
     if not len(ch):
@@ -385,12 +416,18 @@ def insight_channel_table(ch):
     parts.append(f"ROAS 1위 **{roas_lead['채널']}** ({roas_lead['평균ROAS']:.1f}%) — 투입 대비 회수 최고.")
     if ch['1인당거래액'].notna().any():
         per1 = ch.loc[ch['1인당거래액'].idxmax()]
-        parts.append(f"1인당 거래액 1위 **{per1['채널']}** ({fmt_won(per1['1인당거래액'])}) — 모수 대비 매출 기여 최고.")
+        parts.append(f"1인당 거래액 1위 **{per1['채널']}** ({fmt_won(per1['1인당거래액'])}/타겟) — 모수 대비 매출 기여 최고.")
+    r = reallocation_gain(ch)
+    if r:
+        parts.append(
+            f"💡 **{r['lo']}** 발송모수의 {int(r['share']*100)}%({r['move']:,.0f}명)를 **{r['hi']}**로 이전하면 "
+            f"같은 물량으로 거래액 약 **+{fmt_won(r['gain'])} (+{r['pct']:.1f}%)** 기대 (현재 효율 유지 가정)."
+        )
     if len(ch) >= 2 and ch['평균CTR'].notna().any():
         ctr_lead = ch.loc[ch['평균CTR'].idxmax()]
         if ctr_lead['채널'] != roas_lead['채널']:
             parts.append(
-                f"**{ctr_lead['채널']}**는 클릭률(CTR {ctr_lead['평균CTR']:.1%})은 최고지만 ROAS 1위는 아님 "
+                f"**{ctr_lead['채널']}**는 CTR(클릭 {ctr_lead['평균CTR']:.1%})은 최고지만 ROAS 1위는 아님 "
                 f"→ 클릭이 구매로 덜 이어짐. 랜딩·오퍼·객단가 점검 포인트."
             )
     return "  \n".join(parts)
@@ -460,6 +497,19 @@ def insight_volume_perf(agg, x_col, metric, label_fmt):
                      f"이 타이밍 발송 비중 확대 검토.")
     else:
         parts.append("물량·효율이 함께 높은 구간 → 우선 발송 시점으로 활용.")
+    # 정량 액션 — 최저 효율 구간 물량을 최고 효율 수준으로 옮기면?
+    dd = d.dropna(subset=['1인당거래액', '총모수'])
+    dd = dd[dd['총모수'] > 0]
+    if len(dd) >= 2:
+        b = dd.loc[dd['1인당거래액'].idxmax()]
+        w = dd.loc[dd['1인당거래액'].idxmin()]
+        gain = w['총모수'] * (b['1인당거래액'] - w['1인당거래액'])
+        if b[x_col] != w[x_col] and gain > 0:
+            parts.append(
+                f"💡 최저 효율 **{label_fmt(w[x_col])}** 발송({w['총모수']:,.0f}명)을 최고 효율 "
+                f"**{label_fmt(b[x_col])}**({fmt_won(b['1인당거래액'])}/타겟) 수준으로 옮기면 거래액 약 "
+                f"**+{fmt_won(gain)}** 여지 (동일 효율 가정)."
+            )
     return "  \n".join(parts)
 
 
@@ -474,7 +524,8 @@ with tab1:
 
     # ── 채널별 효율 비교 (연도 2개↑: 전년비 / 1개: 월별) ──────────────────────────────────────────────
     num_years = df_with_perf['연도'].nunique()
-    st.caption("총거래액은 발송량 많은 채널이 무조건 높으므로 효율 비교엔 부적합 → 캠페인당·1인당 거래액/ROAS로 비교")
+    st.caption("총거래액은 발송량 많은 채널이 무조건 높아 효율 비교엔 부적합 → 1인당·캠페인당 거래액/ROAS로 비교  \n"
+               "· **1인당거래액 = 거래액 ÷ 발송모수(타겟 수)** · **객단가 = 거래액 ÷ 구매고객수** · **캠페인당거래액 = 거래액 ÷ 발송건수**")
     cmp_metric = st.radio(
         "효율 지표",
         ['평균ROAS', '1인당거래액', '캠페인당거래액', '평균CTR', '평균CR'],
@@ -523,27 +574,52 @@ with tab1:
     )
     st.info(insight_channel_table(ch_perf))
 
-    # ── 일자별 추이 (채널별) — 월별 비교와 중복 피해 일 단위 세분 ──────────────────────────────
-    st.markdown('<div class="section-title">일자별 효율 추이</div>', unsafe_allow_html=True)
-    daily = perf_by(df_with_perf, '발송일자').sort_values('발송일자')
-    daily = daily[pd.to_datetime(daily['발송일자'], errors='coerce').notna()]
+    # ── 일자별 추이 (채널 분리) + 튀는 날 캠페인 드릴다운 ──────────────────────────────
+    st.markdown('<div class="section-title">일자별 효율 추이 (채널별)</div>', unsafe_allow_html=True)
     day_metric = st.selectbox(
         "지표 선택",
-        ['평균ROAS', '1인당거래액', '평균CTR', '평균CR', '발송건수', '총모수'],
+        ['평균ROAS', '1인당거래액', '객단가', '평균CTR', '평균CR', '발송건수', '총모수'],
         key='daily_m'
     )
+    daily_ch = perf_by(df_with_perf, ['발송일자', '채널']).sort_values('발송일자')
+    daily_ch = daily_ch[pd.to_datetime(daily_ch['발송일자'], errors='coerce').notna()]
     fig_day = px.line(
-        daily, x='발송일자', y=day_metric, markers=True,
+        daily_ch, x='발송일자', y=day_metric, color='채널',
+        color_discrete_map=COLORS, markers=True,
         labels={day_metric: day_metric, '발송일자': ''}
     )
-    fig_day.update_traces(line=dict(color='#4C72B0', width=1.5))
-    fig_day.update_layout(height=360)
+    fig_day.update_layout(height=380)
     if day_metric in ['평균CTR', '평균CR']:
         fig_day.update_yaxes(tickformat='.1%')
     elif day_metric in MONEY_METRICS:
         fig_day.update_yaxes(tickformat=',.0f')
     st.plotly_chart(fig_day, use_container_width=True)
-    st.info(insight_daily(daily, day_metric))
+
+    daily_tot = perf_by(df_with_perf, '발송일자').sort_values('발송일자')
+    daily_tot = daily_tot[pd.to_datetime(daily_tot['발송일자'], errors='coerce').notna()]
+    st.info(insight_daily(daily_tot, day_metric))
+
+    # 효율이 튀는 날 → 그날 어떤 캠페인/채널이었나
+    with st.expander("📌 효율이 튀는 날 — 그날 보낸 캠페인 보기"):
+        dd = daily_tot.dropna(subset=[day_metric])
+        if len(dd) >= 2:
+            hi_days = dd.nlargest(3, day_metric)['발송일자'].tolist()
+            lo_days = dd.nsmallest(3, day_metric)['발송일자'].tolist()
+            pick = st.radio("기준", ['최고일 Top3', '최저일 Bottom3'], horizontal=True, key='spike_pick')
+            target_days = hi_days if pick.startswith('최고') else lo_days
+            detail = df_with_perf[df_with_perf['발송일자'].isin(target_days)].copy()
+            detail = detail.sort_values(['발송일자', 'ROAS'], ascending=[True, False])
+            detail['일자'] = pd.to_datetime(detail['발송일자']).dt.strftime('%m/%d')
+            show = detail[['일자', '채널', '캠페인명', '모수', 'CTR', 'CR', 'ROAS', '거래액']]
+            st.dataframe(
+                show.style.format({
+                    'CTR': '{:.1%}', 'CR': '{:.1%}', 'ROAS': '{:.1f}%',
+                    '모수': '{:,.0f}', '거래액': fmt_won,
+                }),
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.caption("일자별 데이터가 부족합니다.")
 
 
 # ══ TAB 2: 월별 트렌드 ══════════════════════════════════
@@ -585,6 +661,37 @@ with tab2:
     else:
         st.caption("발송일자에 시간 정보가 없어 시간대별 분석을 표시할 수 없어요.")
 
+    # ── 요일 × 시간대 효율 히트맵 ──────────────────────────────────────────────
+    df_dh = df_with_perf.dropna(subset=['요일', '시간'])
+    if len(df_dh) and df_dh['시간'].nunique() > 1 and df_dh['요일'].nunique() > 1:
+        st.markdown('<div class="section-title">요일 × 시간대 효율 히트맵</div>', unsafe_allow_html=True)
+        st.caption("색이 진할수록 효율 높음 — 어떤 요일·시간 조합이 best인지 한눈에")
+        heat_metric = st.radio("히트맵 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='heat_m')
+        dh = perf_by(df_dh, ['요일', '시간'])
+        dh['시간'] = dh['시간'].astype(int)
+        pivot = dh.pivot(index='요일', columns='시간', values=heat_metric)
+        pivot = pivot.reindex([d for d in 요일순서 if d in pivot.index])
+        pivot = pivot.reindex(sorted(pivot.columns), axis=1)
+        txt = pivot.copy()
+        for c in txt.columns:
+            txt[c] = txt[c].map(lambda v: fmt_val(v, heat_metric) if pd.notna(v) else '')
+        fig_heat = px.imshow(
+            pivot, color_continuous_scale='Blues', aspect='auto',
+            labels=dict(x='발송 시간(시)', y='', color=heat_metric),
+        )
+        fig_heat.update_traces(text=txt.values, texttemplate='%{text}', textfont_size=10)
+        fig_heat.update_xaxes(side='top', dtick=1)
+        fig_heat.update_layout(height=340, coloraxis_showscale=True)
+        st.plotly_chart(fig_heat, use_container_width=True)
+        bc_df = dh.dropna(subset=[heat_metric])
+        if len(bc_df):
+            bc = bc_df.loc[bc_df[heat_metric].idxmax()]
+            st.info(
+                f"가장 효율 높은 슬롯: **{bc['요일']}요일 {int(bc['시간'])}시** "
+                f"({fmt_val(bc[heat_metric], heat_metric)}, 발송 {int(bc['발송건수'])}건) "
+                f"→ 핵심 캠페인을 이 슬롯에 우선 배치 검토."
+            )
+
 
 # ══ TAB 3: 문구 키워드 분석 ══════════════════════════════════
 with tab3:
@@ -597,6 +704,14 @@ with tab3:
     df_kw = df.copy()
     if 분석채널 != '전체':
         df_kw = df_kw[df_kw['채널'] == 분석채널]
+    # EV40(VIP라운지 핫딜)은 고정 포맷에 브랜드·상품만 갈아끼우는 템플릿이라 문구 키워드 분석에서 제외
+    excluded_ev40 = 0
+    if 'AF코드' in df_kw.columns:
+        ev40_mask = df_kw['AF코드'].astype(str).str.strip().str.upper() == 'EV40'
+        excluded_ev40 = int(ev40_mask.sum())
+        df_kw = df_kw[~ev40_mask]
+    if excluded_ev40:
+        st.caption(f"※ EV40(VIP핫딜) {excluded_ev40}건은 템플릿 포맷이라 키워드 분석에서 제외됨")
     df_kw_perf = df_kw.dropna(subset=['CTR', 'CR', 'ROAS', '문구'])
     df_kw_perf = df_kw_perf[df_kw_perf['ROAS'] > 0]
 
@@ -834,13 +949,37 @@ with tab4:
             )
 
         label = '연도별' if x_col_rec == '연도' else '월별'
-        with st.expander(f"'{selected_group}' {label} 상세"):
+        unit = '연도' if x_col_rec == '연도' else '월'
+        with st.expander(f"'{selected_group}' {label} 상세 + 캠페인 드릴다운", expanded=False):
             rec_show = rec_agg[[x_col_rec, '발송건수', '평균모수', '평균CTR', '평균CR',
                                 '평균ROAS', '1인당거래액', '총거래액']]
             st.dataframe(rec_show.style.format({
                 '평균CTR': '{:.1%}', '평균CR': '{:.1%}', '평균ROAS': '{:.1f}%',
                 '총거래액': fmt_won, '1인당거래액': fmt_won, '평균모수': '{:,.0f}', '발송건수': '{:,}',
             }), use_container_width=True, hide_index=True)
+
+            # 하위 뎁스 — 선택한 기간에 실제로 보낸 개별 캠페인
+            st.markdown(f"**↳ {unit} 선택 시 그 {unit}에 보낸 '{selected_group}' 캠페인 상세**")
+            period_opts = rec_show[x_col_rec].astype(str).tolist()
+            sel_period = st.selectbox(f"{unit} 선택", period_opts, key='rec_period')
+            sub = df_rec.copy()
+            if x_col_rec == '연도':
+                sub = sub[sub['연도'].astype(str) == str(sel_period)]
+            else:
+                sub = sub[sub['월'].astype(str) == str(sel_period)]
+            sub = sub.sort_values('발송일자')
+            detail_cols = [c for c in ['발송일자', '채널', '캠페인명', '모수', 'CTR', 'CR', 'ROAS', '거래액', '문구'] if c in sub.columns]
+            sub_show = sub[detail_cols].copy()
+            if '발송일자' in sub_show.columns:
+                sub_show['발송일자'] = pd.to_datetime(sub_show['발송일자'], errors='coerce').dt.strftime('%Y-%m-%d')
+            st.dataframe(
+                sub_show.style.format({
+                    'CTR': '{:.1%}', 'CR': '{:.1%}', 'ROAS': '{:.1f}%',
+                    '모수': '{:,.0f}', '거래액': fmt_won,
+                }),
+                use_container_width=True, hide_index=True
+            )
+            st.caption(f"{sel_period} '{selected_group}' 발송 {len(sub_show)}건")
     else:
         msg = "2개 이상 연도에" if num_years_rec >= 2 else "2개월 이상"
         st.info(f"{msg} 걸쳐 발송된 반복 캠페인 그룹이 없습니다.")
@@ -850,41 +989,45 @@ with tab4:
 with tab5:
     st.markdown('<div class="section-title">AF코드별 효율 비교</div>', unsafe_allow_html=True)
 
-    # AF코드 → 캠페인 라벨로 매핑·통합. 매월 코드가 바뀌므로 '의미' 기준으로 묶는다.
+    # 제공된 고정 AF코드(AF_MAP)만 집계. 같은 캠페인명 코드(EV20·EV21=승급유도)는 묶는다.
     has_af = 'AF코드' in df.columns and df['AF코드'].notna().any()
     if has_af:
         raw = df['AF코드'].astype(str).str.strip().str.upper()
-        raw = raw.where(df['AF코드'].notna() & ~raw.str.lower().isin(['', 'nan', 'none', 'nat']))
+        raw = raw.where(raw.isin(list(AF_MAP)))   # 고정 코드만, 나머지는 결측 처리(제외)
         df['_AF원본'] = raw
-        df['_분석코드'] = raw.map(lambda c: AF_MAP.get(c, c) if pd.notna(c) else np.nan)
-        code_basis = "AF코드를 캠페인 의미로 매핑·통합 (EV20·EV21→승급유도 등). 매핑에 없는 코드는 코드 그대로 표시"
+        df['_분석코드'] = raw.map(lambda c: AF_MAP.get(c) if pd.notna(c) else np.nan)
     else:
-        df['_AF원본'] = df['캠페인명'].apply(extract_campaign_group)
-        df['_분석코드'] = df['_AF원본']
-        code_basis = "AF코드 열이 없어 캠페인명 핵심코드로 대체 (파일에 'AF코드' 열 추가 시 자동 전환)"
-    st.caption(f"※ {code_basis} | 효율 = 1인당 거래액 · ROAS = Σ거래액÷Σ비용")
+        df['_AF원본'] = np.nan
+        df['_분석코드'] = np.nan
+    st.caption("※ 제공된 고정 AF코드만 집계 (EV00~EV42). 같은 캠페인 코드(EV20·EV21=승급유도 등)는 묶어서 표시  \n"
+               "· 표기: **AF코드(캠페인명)** · 1인당거래액 = 거래액÷발송모수 · ROAS = Σ거래액÷Σ비용")
 
     base = df_with_perf.copy()
     base['_분석코드'] = df.loc[base.index, '_분석코드']
     base['_AF원본'] = df.loc[base.index, '_AF원본']
     base = base.dropna(subset=['_분석코드'])
-    base = base[base['_분석코드'].astype(str).str.len() > 0]
 
-    if not len(base):
-        st.info("효율을 계산할 성과 데이터가 없습니다.")
+    if not has_af:
+        st.info("AF코드 열이 없어 집계할 수 없어요. 파일에 'AF코드' 열을 추가해주세요.")
+    elif not len(base):
+        st.info("고정 AF코드(EV00~EV42)에 해당하는 성과 데이터가 없습니다.")
     else:
+        # 코드 정렬 키 (EV00, EV01 … 순)
         code_rows = []
         for label, g in base.groupby('_분석코드'):
             sends = pd.to_numeric(g['모수'], errors='coerce').sum()
             rev = pd.to_numeric(g['거래액'], errors='coerce').sum()
             codes = sorted(set(g['_AF원본'].dropna().astype(str)))
+            disp = f"{'·'.join(codes)}({label})"
             code_rows.append({
-                '캠페인': label,
+                '캠페인': disp,
                 '코드': ', '.join(codes),
                 '발송횟수': len(g),
                 '총모수': sends,
                 '총거래액': rev,
                 '1인당거래액': rev / sends if sends and sends > 0 else np.nan,
+                '객단가': rev / pd.to_numeric(g['고객수'], errors='coerce').sum()
+                          if pd.to_numeric(g['고객수'], errors='coerce').sum() > 0 else np.nan,
                 '평균CTR': w_avg(g['CTR'], g['모수']),
                 '평균CR': w_cr(g),
                 '평균ROAS': pooled_roas(g),
@@ -893,7 +1036,7 @@ with tab5:
 
         eff_metric = st.radio(
             "효율 지표",
-            ['평균ROAS', '1인당거래액', '총거래액', '평균CTR', '평균CR'],
+            ['평균ROAS', '1인당거래액', '객단가', '총거래액', '평균CTR', '평균CR'],
             horizontal=True, key='af_metric'
         )
         top_n_af = st.slider("표시할 캠페인 수 (상위)", 5, 40, max(5, min(15, len(code_df))), key='af_topn')
@@ -945,9 +1088,9 @@ with tab5:
             worst = valid.loc[valid['1인당거래액'].idxmin()]
             big = valid.loc[valid['총모수'].idxmax()]
             parts = [
-                f"효율 1위 **{best['캠페인']}**({best['코드']}) — 타겟 {best['총모수']:,.0f}명 → "
+                f"효율 1위 **{best['캠페인']}** — 타겟 {best['총모수']:,.0f}명 → "
                 f"{fmt_won(best['총거래액'])} (1인당 {fmt_won(best['1인당거래액'])}, ROAS {best['평균ROAS']:.1f}%).",
-                f"효율 최하위 **{worst['캠페인']}**({worst['코드']}) — 1인당 {fmt_won(worst['1인당거래액'])}.",
+                f"효율 최하위 **{worst['캠페인']}** — 1인당 {fmt_won(worst['1인당거래액'])}.",
             ]
             if big['캠페인'] != best['캠페인']:
                 parts.append(
@@ -956,10 +1099,10 @@ with tab5:
                 )
             st.info("  \n".join(parts))
 
-        with st.expander("캠페인(AF코드)별 상세 수치"):
+        with st.expander("AF코드별 상세 수치"):
             st.dataframe(
                 code_df.sort_values(eff_metric, ascending=False).style.format({
-                    '총모수': '{:,.0f}', '총거래액': fmt_won, '1인당거래액': fmt_won,
+                    '총모수': '{:,.0f}', '총거래액': fmt_won, '1인당거래액': fmt_won, '객단가': fmt_won,
                     '평균CTR': '{:.1%}', '평균CR': '{:.1%}', '평균ROAS': '{:.1f}%', '발송횟수': '{:,}',
                 }),
                 use_container_width=True, hide_index=True
