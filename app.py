@@ -33,6 +33,10 @@ st.markdown("""
         border-bottom: 2px solid #e9ecef;
         scroll-margin-top: 60px;
     }
+    /* 사이드바 하위 메뉴 — 클릭(focus)한 것만 강조, 나머지는 회색 */
+    a.subnav-link { color: #9aa0a6; text-decoration: none; }
+    a.subnav-link:hover { color: #5b6168; }
+    a.subnav-link:focus, a.subnav-link:active { color: #2E68B0; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -276,7 +280,7 @@ with st.sidebar:
             if _secs:
                 links = "".join(
                     f'<div style="font-size:0.85em;margin:3px 0">'
-                    f'<a href="#{a}" style="text-decoration:none;color:#2E68B0">• {lbl}</a></div>'
+                    f'<a href="#{a}" class="subnav-link">• {lbl}</a></div>'
                     for a, lbl in _secs
                 )
                 st.markdown(
@@ -1107,19 +1111,26 @@ elif nav == "🔤 문구 키워드 분석":
             r = v / base
             return '높은 편 ▲' if r >= 1.15 else ('낮은 편 ▼' if r <= 0.87 else '보통 —')
 
-        cats = [c for c in get_text_categories(diag_txt) if c != '상품/기타']
+        # 개인화([고객명])는 거의 모든 문구에 들어가 변별력이 없음 → 유사도 기준에서 제외
+        cats_all = get_text_categories(diag_txt)
+        cats = [c for c in cats_all if c not in ('상품/기타', '개인화')]
         if cats:
             sim = df_kw_perf[df_kw_perf['문구'].apply(lambda t: any(c in get_text_categories(t) for c in cats))]
+            basis = f"'{', '.join(cats)}' 포함 과거 문구 {len(sim):,}건 기준"
         else:
             sim = df_kw_perf
+            basis = f"변별 카테고리 없음(개인화·상품명 위주) → 전체 {len(sim):,}건 평균 기준"
         exp_ctr, exp_cr, exp_roas = w_avg(sim['CTR'], sim['모수']), w_cr(sim), pooled_roas(sim)
 
-        st.markdown("**포함 카테고리:** " + (" ".join(f"`{c}`" for c in cats) if cats else "특이 카테고리 없음(일반 문구)"))
+        shown_cats = [c for c in cats_all if c != '상품/기타']
+        st.markdown("**감지 카테고리:** " + (
+            " ".join(f"`{c}`" + ("(변별X)" if c == '개인화' else "") for c in shown_cats)
+            if shown_cats else "특이 카테고리 없음(일반 문구)"))
         d1, d2, d3 = st.columns(3)
         d1.metric("예상 CTR", f"{exp_ctr:.1%}" if pd.notna(exp_ctr) else '-', _band(exp_ctr, base_ctr), delta_color="off")
         d2.metric("예상 CR", f"{exp_cr:.1%}" if pd.notna(exp_cr) else '-', _band(exp_cr, base_cr), delta_color="off")
         d3.metric("예상 ROAS", f"{exp_roas:,.0f}%" if pd.notna(exp_roas) else '-', _band(exp_roas, base_roas), delta_color="off")
-        st.caption(f"유사 문구(같은 카테고리 포함) {len(sim):,}건 기준 · 전체 평균 CTR {base_ctr:.1%} / ROAS {base_roas:,.0f}%")
+        st.caption(f"{basis} · 전체 평균 CTR {base_ctr:.1%} / ROAS {base_roas:,.0f}%")
 
         cand = set()
         for ws in KW_CATEGORIES.values():
