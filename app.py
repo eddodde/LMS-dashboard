@@ -456,6 +456,24 @@ def insight_daily(daily, metric):
     return "  \n".join(parts)
 
 
+def render_campaign_detail(sub, sort_col='ROAS'):
+    """특정 구간(요일/시간/일자)에 보낸 개별 캠페인 상세 테이블."""
+    cols = [c for c in ['발송일자', '채널', 'AF코드', '캠페인명', '모수', 'CTR', 'CR', 'ROAS', '거래액'] if c in sub.columns]
+    s = sub[cols].copy()
+    if sort_col in s.columns:
+        s = s.sort_values(sort_col, ascending=False, na_position='last')
+    if '발송일자' in s.columns:
+        s['발송일자'] = pd.to_datetime(s['발송일자'], errors='coerce').dt.strftime('%m/%d')
+    st.dataframe(
+        s.style.format({
+            'CTR': '{:.1%}', 'CR': '{:.1%}', 'ROAS': '{:.1f}%',
+            '모수': '{:,.0f}', '거래액': fmt_won,
+        }),
+        use_container_width=True, hide_index=True
+    )
+    st.caption(f"{len(s)}건")
+
+
 def mixed_chart(agg, x_col, perf_metric, vol_col='총모수', vol_label='총 발송모수'):
     """막대=물량(우축) + 선=효율지표(좌축) 혼합차트. 물량 때문인지 효율 때문인지 한눈에."""
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -651,18 +669,28 @@ with tab2:
         dow_metric = st.radio("요일별 효율 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='dow_m')
         st.plotly_chart(mixed_chart(dow_agg, '요일', dow_metric), use_container_width=True)
         st.info(insight_volume_perf(dow_agg, '요일', dow_metric, lambda x: f"{x}요일"))
+        with st.expander("📌 요일별 — 그 요일에 보낸 캠페인 보기"):
+            dow_opts = [d for d in 요일순서 if d in df_dow['요일'].unique()]
+            sel_dow = st.selectbox("요일 선택", dow_opts, key='dow_drill')
+            render_campaign_detail(df_dow[df_dow['요일'] == sel_dow])
 
     # ── 시간대별 성과 (혼합) ──────────────────────────────────────────────
     df_hour = df_with_perf.dropna(subset=['시간'])
     if len(df_hour) and df_hour['시간'].nunique() > 1:
         st.markdown('<div class="section-title">시간대별 성과 (발송량 vs 효율)</div>', unsafe_allow_html=True)
-        st.caption(f"발송 {MIN_SLOT_N}건 미만 시간대는 1건짜리 outlier 왜곡을 막기 위해 제외")
+        st.caption(f"발송 {MIN_SLOT_N}건 미만 시간대는 1건짜리 outlier 왜곡을 막기 위해 제외  \n"
+                   "⚠️ 시간대 효율은 '그 시간 자체'가 아니라 '그 시간에 주로 보낸 캠페인 성격'과 섞여 있음 "
+                   "(예: 10시=선착순 쿠폰). 아래 드릴다운으로 무엇을 보냈는지 확인 권장")
         hour_agg = perf_by(df_hour, '시간').sort_values('시간')
         hour_agg = hour_agg[hour_agg['발송건수'] >= MIN_SLOT_N]   # 표본 적은 시간대 제외
         hour_agg['시간'] = hour_agg['시간'].apply(lambda h: f"{int(h)}시")
         hour_metric = st.radio("시간대별 효율 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='hour_m')
         st.plotly_chart(mixed_chart(hour_agg, '시간', hour_metric), use_container_width=True)
         st.info(insight_volume_perf(hour_agg, '시간', hour_metric, lambda x: f"{x}"))
+        with st.expander("📌 시간대별 — 그 시간에 보낸 캠페인 보기 (효율 교란 확인용)"):
+            hr_opts = sorted(int(h) for h in df_hour['시간'].dropna().unique())
+            sel_hr = st.selectbox("시간 선택", hr_opts, format_func=lambda h: f"{h}시", key='hour_drill')
+            render_campaign_detail(df_hour[df_hour['시간'] == sel_hr])
     else:
         st.caption("발송일자에 시간 정보가 없어 시간대별 분석을 표시할 수 없어요.")
 
