@@ -715,14 +715,18 @@ def build_keyword_perf(df_perf, keywords, min_cases=2):
     return pd.DataFrame(rows)
 
 
-def render_campaign_detail(sub, sort_col='ROAS'):
-    """특정 구간(요일/시간/일자)에 보낸 개별 캠페인 상세 테이블."""
-    cols = [c for c in ['발송일자', '채널', 'AF코드', '캠페인명', '모수', 'CTR', 'CR', 'ROAS', '거래액'] if c in sub.columns]
+def render_campaign_detail(sub, sort_col='ROAS', show_msg=False, msg_len=60):
+    """특정 구간(요일/시간/일자/카테고리)에 보낸 개별 캠페인 상세 테이블.
+    show_msg=True면 문구 요약 컬럼 추가 (문구 분석용)."""
+    base = ['발송일자', '채널', 'AF코드', '캠페인명', '모수', 'CTR', 'CR', 'ROAS', '거래액']
+    cols = [c for c in base if c in sub.columns]
     s = sub[cols].copy()
     if sort_col in s.columns:
         s = s.sort_values(sort_col, ascending=False, na_position='last')
     if '발송일자' in s.columns:
         s['발송일자'] = pd.to_datetime(s['발송일자'], errors='coerce').dt.strftime('%m/%d')
+    if show_msg and '문구' in sub.columns:
+        s['문구(요약)'] = sub.loc[s.index, '문구'].astype(str).str.replace(r'\s+', ' ', regex=True).str.slice(0, msg_len) + '…'
     st.dataframe(
         s.style.format({
             'CTR': '{:.1%}', 'CR': '{:.1%}', 'ROAS': '{:.1f}%',
@@ -1153,10 +1157,10 @@ elif nav == "🔤 문구 키워드 분석":
             elif cat_pick != '상품/기타':
                 st.caption("이 카테고리 정의 단어가 실제 문구에 등장하지 않았어요. (분류는 다른 단어로 됐을 수 있음)")
 
-            # 실제 캠페인 직접 확인 — 유효성 판단용
+            # 실제 캠페인 직접 확인 — 유효성 판단용 (문구 요약 포함)
             if len(cat_campaigns):
-                st.markdown(f"**'{cat_pick}' 분류 캠페인 (ROAS순)**")
-                render_campaign_detail(cat_campaigns)
+                st.markdown(f"**'{cat_pick}' 분류 캠페인 (ROAS순) — 문구 요약 포함**")
+                render_campaign_detail(cat_campaigns, show_msg=True)
 
     # ── 2. 키워드 빈도 ──────────────────────────────────────────────
     sec_title('키워드 빈도 (카테고리별 색상)', 'p3-freq')
