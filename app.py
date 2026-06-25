@@ -324,6 +324,8 @@ AF_FIXED = {'EV00', 'EV20', 'EV21', 'EV25'}  # 매월 동일(고정) 코드
 
 # 표본이 너무 적은 구간(시간대·히트맵 셀)은 1건짜리 outlier가 효율을 왜곡하므로 제외
 MIN_SLOT_N = 2
+# 키워드 '효과'를 말하려면 최소 이 정도 표본은 있어야 함 (그 이하는 오퍼·타겟 교란이 더 큼)
+MIN_KW_CASES = 5
 
 def classify_keyword(kw):
     for cat, words in KW_CATEGORIES.items():
@@ -834,11 +836,15 @@ with tab3:
                 if len(has) == 0:
                     continue
                 hr, nr = pooled_roas(has), pooled_roas(no)
-                wrows.append({'키워드': w, '포함건수': len(has), '포함_ROAS': hr,
+                wrows.append({'키워드': w, '포함건수': len(has),
+                              '표본': '충분' if len(has) >= MIN_KW_CASES else '부족(참고만)',
+                              '포함_ROAS': hr,
                               'ROAS리프트': (hr - nr) if (pd.notna(hr) and pd.notna(nr)) else np.nan})
             if wrows:
-                wdf = pd.DataFrame(wrows).sort_values('포함_ROAS', ascending=False)
-                st.markdown("**카테고리 정의 단어별 성과** (포함건수 적으면 참고만)")
+                wdf = pd.DataFrame(wrows).sort_values('포함건수', ascending=False)
+                st.markdown("**카테고리 정의 단어별 등장·ROAS** (포함건수 순)")
+                st.caption(f"⚠️ 포함 {MIN_KW_CASES}건 미만('부족')은 그 캠페인의 오퍼·타겟 영향이 더 커서 "
+                           "키워드 효과로 단정 불가 — 예: 99% 할인 1건에 우연히 들어간 단어도 ROAS가 높게 찍힘")
                 st.dataframe(
                     wdf.style.format({'포함_ROAS': '{:,.0f}%', 'ROAS리프트': '{:+,.0f}%p', '포함건수': '{:,}'}),
                     use_container_width=True, hide_index=True
@@ -876,12 +882,13 @@ with tab3:
             st.markdown("**상품/기타**: 위 분류에 해당하지 않는 상품명·소재명 등")
 
     # ── 3. 키워드별 성과 리프트 ──────────────────────────────────────────────
-    st.markdown('<div class="section-title">성과를 올리는 / 깎는 키워드</div>', unsafe_allow_html=True)
-    st.caption("문구에 키워드가 들어간 캠페인 vs 안 들어간 캠페인의 ROAS 차이(%p). "
-               "충분한 표본만 비교하려 포함 3건 이상 키워드만, 상·하위만 표시")
+    st.markdown('<div class="section-title">ROAS와 함께 등장하는 키워드 (상관, 인과 아님)</div>', unsafe_allow_html=True)
+    st.caption(f"키워드 포함 vs 미포함 캠페인의 ROAS 차이(%p) · 포함 {MIN_KW_CASES}건 이상만.  \n"
+               "⚠️ 이건 '효과'가 아니라 '상관'입니다 — 키워드가 ROAS를 올린 게 아니라, 그 키워드를 주로 쓰는 "
+               "캠페인의 오퍼·타겟이 ROAS를 좌우했을 가능성이 큼. 단정 말고 가설로만 활용하세요.")
 
     if kw_all and len(kw_perf_all):
-        kw_perf_df = kw_perf_all[kw_perf_all['포함건수'] >= 3].sort_values('ROAS리프트', ascending=False)
+        kw_perf_df = kw_perf_all[kw_perf_all['포함건수'] >= MIN_KW_CASES].sort_values('ROAS리프트', ascending=False)
         if len(kw_perf_df):
             N = 8
             top = kw_perf_df.head(N)
@@ -907,10 +914,10 @@ with tab3:
             t = kw_perf_df.iloc[0]
             b = kw_perf_df.iloc[-1]
             st.info(
-                f"문구에 **'{t['키워드']}'**({t['카테고리']}, {t['포함건수']}건)가 들어가면 ROAS가 "
-                f"평균 대비 **{t['ROAS리프트']:+,.0f}%p** 높음 → 이 표현을 늘려볼 가치.  \n"
-                f"반대로 **'{b['키워드']}'**가 들어간 캠페인은 ROAS가 **{b['ROAS리프트']:+,.0f}%p**로 낮음 "
-                f"→ 단독 사용은 지양하거나 오퍼·타겟과 함께 재검토."
+                f"**'{t['키워드']}'**({t['카테고리']}, {t['포함건수']}건)가 들어간 캠페인은 ROAS가 평균 대비 "
+                f"**{t['ROAS리프트']:+,.0f}%p** 높게 '관찰'됨 → 다만 인과는 아님. 예시 문구로 어떤 오퍼와 함께 쓰였는지 확인 후 가설로.  \n"
+                f"**'{b['키워드']}'**({b['포함건수']}건)는 ROAS가 **{b['ROAS리프트']:+,.0f}%p**로 낮게 관찰 → "
+                f"키워드 탓이 아니라 저관여 캠페인에 주로 쓰였을 가능성. 예시 문구 확인 권장."
             )
 
             with st.expander("키워드별 상세 수치"):
