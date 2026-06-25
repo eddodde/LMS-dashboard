@@ -460,6 +460,49 @@ def insight_daily(daily, metric):
     return "  \n".join(parts)
 
 
+def single_perf(g):
+    """한 부분집합의 성과 지표 묶음 (비교용)."""
+    sends = pd.to_numeric(g['모수'], errors='coerce').sum()
+    rev = pd.to_numeric(g['거래액'], errors='coerce').sum()
+    buyers = pd.to_numeric(g['고객수'], errors='coerce').sum() if '고객수' in g else np.nan
+    return {
+        '발송건수': len(g),
+        '총모수': sends,
+        '평균CTR': w_avg(g['CTR'], g['모수']),
+        '평균CR': w_cr(g),
+        '평균ROAS': pooled_roas(g),
+        '1인당거래액': rev / sends if sends and sends > 0 else np.nan,
+        '객단가': rev / buyers if buyers and buyers > 0 else np.nan,
+        '총거래액': rev,
+    }
+
+
+def cmp_fmt(key, v):
+    if pd.isna(v):
+        return '-'
+    if key in ('평균CTR', '평균CR'):
+        return f"{v:.1%}"
+    if key == '평균ROAS':
+        return f"{v:,.0f}%"
+    if key in MONEY_METRICS:
+        return fmt_won(v)
+    return f"{v:,.0f}"
+
+
+def cmp_delta(key, va, vb):
+    """A 기준 B 대비 차이 (st.metric delta용 문자열)."""
+    if pd.isna(va) or pd.isna(vb):
+        return None
+    d = va - vb
+    if key in ('평균CTR', '평균CR'):
+        return f"{d:+.1%}p"
+    if key == '평균ROAS':
+        return f"{d:+,.0f}%p"
+    if key in MONEY_METRICS:
+        return ('+' if d >= 0 else '-') + fmt_won(abs(d))
+    return f"{d:+,.0f}"
+
+
 def build_keyword_perf(df_perf, keywords, min_cases=2):
     """키워드별 포함 vs 미포함 ROAS 리프트 테이블 (풀링 ROAS 기준)."""
     rows = []
@@ -555,8 +598,8 @@ def insight_volume_perf(agg, x_col, metric, label_fmt):
 
 
 # ── 탭 구성 ──────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석", "🗂 캠페인 상세", "🏷 AF코드별 효율"]
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석", "🗂 캠페인 상세", "🏷 AF코드별 효율", "⚖️ A vs B 비교"]
 )
 
 
@@ -1206,3 +1249,77 @@ with tab5:
                 }),
                 use_container_width=True, hide_index=True
             )
+
+
+# ══ TAB 6: A vs B 비교 ══════════════════════════════════
+with tab6:
+    st.markdown('<div class="section-title">캠페인 비교 (A vs B)</div>', unsafe_allow_html=True)
+    st.caption("기준을 정하고 두 항목을 골라 효율을 나란히 비교 — 요금제 비교처럼 어느 쪽이 더 나은지 한눈에")
+
+    basis = st.radio("비교 기준", ['채널', 'AF코드(캠페인)', '캠페인 그룹'], horizontal=True, key='cmp_basis')
+    cmpdf = df_with_perf.copy()
+    if basis == '채널':
+        cmpdf['_키'] = cmpdf['채널'].astype(str)
+    elif basis == 'AF코드(캠페인)':
+        if 'AF코드' in cmpdf.columns:
+            up = cmpdf['AF코드'].astype(str).str.strip().str.upper()
+            cmpdf['_키'] = up.map(lambda c: AF_MAP.get(c))   # 고정 코드만
+        else:
+            cmpdf['_키'] = np.nan
+    else:
+        cmpdf['_키'] = cmpdf['캠페인명'].apply(extract_campaign_group)
+    cmpdf = cmpdf.dropna(subset=['_키'])
+    cmpdf = cmpdf[cmpdf['_키'].astype(str).str.strip() != '']
+    opts = sorted(cmpdf['_키'].astype(str).unique().tolist())
+
+    if len(opts) < 2:
+        st.info("이 기준에선 비교할 항목이 2개 미만이에요. 다른 기준을 선택해보세요.")
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            a = st.selectbox("A 선택", opts, index=0, key='cmp_a')
+        with c2:
+            b = st.selectbox("B 선택", opts, index=min(1, len(opts) - 1), key='cmp_b')
+
+        if a == b:
+            st.warning("서로 다른 항목을 선택하세요.")
+        else:
+            ma = single_perf(cmpdf[cmpdf['_키'] == a])
+            mb = single_perf(cmpdf[cmpdf['_키'] == b])
+            METRICS = ['평균ROAS', '1인당거래액', '객단가', '평균CTR', '평균CR', '총거래액', '총모수', '발송건수']
+            EFF = ['평균ROAS', '1인당거래액', '객단가', '평균CTR', '평균CR']  # 효율(높을수록 우세)
+
+            cc1, cc2 = st.columns(2)
+            for col, name, mine, other in [(cc1, a, ma, mb), (cc2, b, mb, ma)]:
+                with col:
+                    st.markdown(f"#### {name}")
+                    st.caption(f"발송 {mine['발송건수']:,}건 · 모수 {mine['총모수']:,.0f}명")
+                    for k in METRICS:
+                        st.metric(k, cmp_fmt(k, mine[k]), delta=cmp_delta(k, mine[k], other[k]))
+
+            # 종합 판정 (효율 지표 승수)
+            awin = [k for k in EFF if pd.notna(ma[k]) and pd.notna(mb[k]) and ma[k] > mb[k]]
+            bwin = [k for k in EFF if pd.notna(ma[k]) and pd.notna(mb[k]) and mb[k] > ma[k]]
+            if len(awin) > len(bwin):
+                verdict = f"**{a}** 효율 우세 (효율 {len(awin)}:{len(bwin)})"
+            elif len(bwin) > len(awin):
+                verdict = f"**{b}** 효율 우세 (효율 {len(bwin)}:{len(awin)})"
+            else:
+                verdict = f"효율 지표 {len(awin)}:{len(bwin)} 무승부 — 목적에 따라 선택"
+            reach = a if ma['총모수'] > mb['총모수'] else b
+            st.info(
+                f"⚖️ {verdict}.  \n"
+                f"· {a} 우세 지표: {', '.join(awin) if awin else '없음'}  \n"
+                f"· {b} 우세 지표: {', '.join(bwin) if bwin else '없음'}  \n"
+                f"· 도달(모수)은 **{reach}**가 큼 — 효율과 규모는 다른 축이니 목적(효율 vs 도달)에 맞게 판단하세요."
+            )
+
+            with st.expander("비교 표 (숫자)"):
+                tbl = pd.DataFrame({
+                    '지표': METRICS,
+                    a: [cmp_fmt(k, ma[k]) for k in METRICS],
+                    b: [cmp_fmt(k, mb[k]) for k in METRICS],
+                    '우세': [('=' if (pd.isna(ma[k]) or pd.isna(mb[k]) or ma[k] == mb[k])
+                              else (a if ma[k] > mb[k] else b)) for k in METRICS],
+                })
+                st.dataframe(tbl, use_container_width=True, hide_index=True)
