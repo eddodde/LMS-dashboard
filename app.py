@@ -274,14 +274,16 @@ with st.sidebar:
         if p == sel:
             _secs = SECTIONS.get(p, [])
             if _secs:
-                links = " · ".join(
-                    f'<a href="#{a}" style="text-decoration:none;color:#2E68B0">{lbl}</a>' for a, lbl in _secs
+                links = "".join(
+                    f'<div style="font-size:0.85em;margin:3px 0">'
+                    f'<a href="#{a}" style="text-decoration:none;color:#2E68B0">• {lbl}</a></div>'
+                    for a, lbl in _secs
                 )
                 st.markdown(
                     f"<div style='background:#F2F5FA;border-left:3px solid #2E68B0;"
                     f"padding:6px 10px;margin:2px 0 10px 14px;border-radius:4px'>"
-                    f"<span style='font-size:0.78em;color:#666'>📍 '{p.split(' ', 1)[-1]}' 안에서 이동</span><br>"
-                    f"<span style='font-size:0.85em'>{links}</span></div>",
+                    f"<span style='font-size:0.78em;color:#666'>📍 '{p.split(' ', 1)[-1]}' 안에서 이동</span>"
+                    f"<div style='margin-top:4px'>{links}</div></div>",
                     unsafe_allow_html=True,
                 )
     nav = sel
