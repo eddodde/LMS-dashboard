@@ -1044,7 +1044,61 @@ with tab3:
                 )
                 st.caption("ROAS 높은 순. 실제 문구를 보면 이 키워드가 어떤 맥락에서 쓰였는지(예: 저관여 캠페인에 주로 등장) 확인됩니다.")
         else:
-            st.caption("포함 3건 이상인 키워드가 부족해 리프트를 표시할 수 없어요.")
+            st.caption(f"포함 {MIN_KW_CASES}건 이상인 키워드가 부족해 리프트를 표시할 수 없어요.")
+
+    # ── 4. 문구 진단기 (입력 → 예상 효율 + 키워드 코멘트) ──────────────────────────────
+    st.markdown('<div class="section-title">✍️ 문구 진단 — 입력하면 예상 효율 + 키워드 코멘트</div>', unsafe_allow_html=True)
+    st.caption("과거 발송 데이터 기반 '예상'(상관)이지 보장은 아닙니다. 표본 적은 키워드는 참고만.")
+    diag_txt = st.text_area("진단할 문구 입력", key='diag_txt', height=90,
+                            placeholder="예: (광고)[LF몰] 겨울 시즌오프 단 3일 최대 50% 할인 쿠폰 ▷ 지금 확인")
+    if diag_txt.strip():
+        base_ctr = w_avg(df_kw_perf['CTR'], df_kw_perf['모수'])
+        base_cr = w_cr(df_kw_perf)
+        base_roas = pooled_roas(df_kw_perf)
+
+        def _band(v, base):
+            if pd.isna(v) or pd.isna(base) or base == 0:
+                return '데이터 없음'
+            r = v / base
+            return '높은 편 ▲' if r >= 1.15 else ('낮은 편 ▼' if r <= 0.87 else '보통 —')
+
+        cats = [c for c in get_text_categories(diag_txt) if c != '상품/기타']
+        if cats:
+            sim = df_kw_perf[df_kw_perf['문구'].apply(lambda t: any(c in get_text_categories(t) for c in cats))]
+        else:
+            sim = df_kw_perf
+        exp_ctr, exp_cr, exp_roas = w_avg(sim['CTR'], sim['모수']), w_cr(sim), pooled_roas(sim)
+
+        st.markdown("**포함 카테고리:** " + (" ".join(f"`{c}`" for c in cats) if cats else "특이 카테고리 없음(일반 문구)"))
+        d1, d2, d3 = st.columns(3)
+        d1.metric("예상 CTR", f"{exp_ctr:.1%}" if pd.notna(exp_ctr) else '-', _band(exp_ctr, base_ctr), delta_color="off")
+        d2.metric("예상 CR", f"{exp_cr:.1%}" if pd.notna(exp_cr) else '-', _band(exp_cr, base_cr), delta_color="off")
+        d3.metric("예상 ROAS", f"{exp_roas:,.0f}%" if pd.notna(exp_roas) else '-', _band(exp_roas, base_roas), delta_color="off")
+        st.caption(f"유사 문구(같은 카테고리 포함) {len(sim):,}건 기준 · 전체 평균 CTR {base_ctr:.1%} / ROAS {base_roas:,.0f}%")
+
+        cand = set()
+        for ws in KW_CATEGORIES.values():
+            cand.update(ws)
+        if len(kw_perf_all):
+            cand.update(kw_perf_all['키워드'].tolist())
+        present = sorted({w for w in cand if w and w in diag_txt}, key=lambda x: -len(x))
+        krows = []
+        for w in present:
+            has = df_kw_perf[df_kw_perf['문구'].str.contains(re.escape(w), na=False)]
+            if len(has) == 0:
+                continue
+            krows.append({
+                '키워드': w, '카테고리': classify_keyword(w), '과거이력': len(has),
+                'CTR 영향': _band(w_avg(has['CTR'], has['모수']), base_ctr),
+                'ROAS 영향': _band(pooled_roas(has), base_roas),
+                '표본': '충분' if len(has) >= MIN_KW_CASES else '부족(참고)',
+            })
+        if krows:
+            st.markdown("**입력 문구 속 키워드별 예상 영향** (과거 이 키워드가 든 캠페인 기준)")
+            st.dataframe(pd.DataFrame(krows), use_container_width=True, hide_index=True)
+            st.caption("⚠️ '영향'은 인과가 아니라 과거 상관. 표본 '부족'은 그 캠페인 오퍼·타겟 탓일 수 있으니 참고만.")
+        else:
+            st.caption("과거 데이터에 매칭되는 키워드가 없어요. (신규 표현이거나 상품명 위주 문구)")
 
 
 # ══ TAB 4: 캠페인 상세 ══════════════════════════════════
