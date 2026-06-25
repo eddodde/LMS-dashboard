@@ -33,10 +33,9 @@ st.markdown("""
         border-bottom: 2px solid #e9ecef;
         scroll-margin-top: 60px;
     }
-    /* 사이드바 하위 메뉴 — 클릭(focus)한 것만 강조, 나머지는 회색 */
-    a.subnav-link { color: #9aa0a6; text-decoration: none; }
-    a.subnav-link:hover { color: #5b6168; }
-    a.subnav-link:focus, a.subnav-link:active { color: #2E68B0; font-weight: 700; }
+    /* 사이드바 하위 메뉴 링크 */
+    a.subnav-link { color: #2E68B0; text-decoration: none; }
+    a.subnav-link:hover { text-decoration: underline; }
 </style>
 """, unsafe_allow_html=True)
 
