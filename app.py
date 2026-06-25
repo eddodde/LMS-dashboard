@@ -939,8 +939,28 @@ elif nav == "📅 월별 트렌드":
             st.info(
                 f"가장 효율 높은 슬롯: **{bc['요일']}요일 {int(bc['시간'])}시** "
                 f"({fmt_val(bc[heat_metric], heat_metric)}, 발송 {int(bc['발송건수'])}건) "
-                f"→ 핵심 캠페인을 이 슬롯에 우선 배치 검토."
+                f"→ 단, 그 슬롯이 어떤 캠페인 때문인지 아래에서 확인하세요."
             )
+
+            # 슬롯 드릴다운 — 그 요일·시간에 보낸 캠페인 (기본값 = best 슬롯)
+            with st.expander("📌 슬롯별 — 그 요일·시간에 보낸 캠페인 보기", expanded=True):
+                cc1, cc2 = st.columns(2)
+                dow_list = [d for d in 요일순서 if d in df_dh['요일'].unique()]
+                hr_list = sorted(int(h) for h in df_dh['시간'].dropna().unique())
+                with cc1:
+                    pick_dow = st.selectbox("요일", dow_list,
+                                            index=dow_list.index(bc['요일']) if bc['요일'] in dow_list else 0,
+                                            key='heat_drill_dow')
+                with cc2:
+                    pick_hr = st.selectbox("시간", hr_list, format_func=lambda h: f"{h}시",
+                                           index=hr_list.index(int(bc['시간'])) if int(bc['시간']) in hr_list else 0,
+                                           key='heat_drill_hr')
+                slot = df_dh[(df_dh['요일'] == pick_dow) & (df_dh['시간'] == pick_hr)]
+                if len(slot):
+                    st.caption(f"{pick_dow}요일 {pick_hr}시 발송 {len(slot)}건 — ROAS 높은 순")
+                    render_campaign_detail(slot)
+                else:
+                    st.caption(f"{pick_dow}요일 {pick_hr}시엔 발송 내역이 없어요.")
 
 
 # ══ 문구 키워드 분석 ══════════════════════════════════
