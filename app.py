@@ -1129,7 +1129,13 @@ elif nav == "🔤 문구 키워드 분석":
         d1.metric("예상 CTR", f"{exp_ctr:.1%}" if pd.notna(exp_ctr) else '-', _band(exp_ctr, base_ctr), delta_color="off")
         d2.metric("예상 CR", f"{exp_cr:.1%}" if pd.notna(exp_cr) else '-', _band(exp_cr, base_cr), delta_color="off")
         d3.metric("예상 ROAS", f"{exp_roas:,.0f}%" if pd.notna(exp_roas) else '-', _band(exp_roas, base_roas), delta_color="off")
-        st.caption(f"{basis} · 전체 평균 CTR {base_ctr:.1%} / ROAS {base_roas:,.0f}%")
+        st.caption(
+            f"📌 **산출 근거:** 입력 문구에서 감지한 카테고리를 포함한 **과거 발송 {len(sim):,}건의 실제 실적 가중평균**이에요. "
+            f"즉 '이런 유형의 문구는 보통 이 정도 나왔다'는 뜻 (예측 모델 X). "
+            f"감지 키워드가 없으면 전체 평균으로 대체.  \n"
+            f"비교 기준 = 전체 평균 CTR {base_ctr:.1%} / CR {base_cr:.1%} / ROAS {base_roas:,.0f}% "
+            f"→ 이보다 높으면 ▲, 낮으면 ▼."
+        )
 
         cand = set()
         for ws in KW_CATEGORIES.values():
@@ -1157,6 +1163,11 @@ elif nav == "🔤 문구 키워드 분석":
 
         # ── 개선 제안 + 잘 나간 예시 문구 (과거 데이터 기반, AI 창작 아님) ──
         st.markdown("**💡 개선 제안 & 추천 문구**")
+        st.caption(
+            "입력 문구를 과거 데이터와 비교해 ① **추가하면 좋을 요소**(과거 성과 높았는데 지금 문구엔 없는 것), "
+            "② **다시 볼 요소**(들어있지만 과거 성과 낮았던 것), "
+            "③ **비슷한 유형에서 실제로 잘 나간 문구**를 보여줍니다. 아래 항목을 참고해 문구를 다듬어 보세요."
+        )
         cat_perf = {}
         for c in KW_CATEGORIES:
             if c in ('상품/기타', '개인화'):
