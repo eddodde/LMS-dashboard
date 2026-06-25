@@ -93,7 +93,8 @@ _KW_STOP = {
     '경우', '관련', '대한', '통해', '위한', '위해', '정도', '준비', '시작', '진행', '대상',
     # 동사·형용사 조각 (의미 없는 토큰)
     '확인해보세', '확인해', '있는', '있어', '있습', '없는', '없어', '되는', '하는', '드리는',
-    '만나', '만나보', '담아', '담긴', '놓치', '챙기', '누리', '드세', '받기', '보기', '오는',
+    '만나', '만나보', '담아', '담긴', '놓치', '놓치지', '챙기', '누리', '드세', '받기', '보기', '오는',
+    '지마', '마세', '하지', '잊지', '늦지', '서둘러', '지금만', '바로지금',
     '초특',  # '초특가'는 normalize에서 처리, 잘린 조각은 제외
     # 너무 범용적인 단어
     '상품', '구매', '주문', '배송', '서비스', '사이트', '페이지', '쇼핑', '혜택가',
@@ -110,8 +111,9 @@ _KW_NORMALIZE = {
 _KW_PARTICLE_TAILS = ('으로', '에서', '까지', '부터', '에게', '이라', '이나', '만큼', '처럼', '한테', '이신', '으신')
 _KW_JOSA = set('을를은는이가의에도만과와로께요')
 # 동사·어미로 끝나는 토큰은 키워드가 아니므로 제외
-_KW_BAD_TAILS = ('보세', '하세', '으세', '해요', '어요', '아요', '에요', '니다', '습니', '드려',
-                 '드리', '하기', '되기', '하실', '하면', '있는', '없는', '하는', '되는', '있어', '없어')
+_KW_BAD_TAILS = ('보세', '하세', '으세', '세요', '해요', '어요', '아요', '에요', '니다', '습니', '드려',
+                 '드리', '하기', '되기', '하실', '하면', '있는', '없는', '하는', '되는', '있어', '없어',
+                 '마세', '지마', '잊지', '늦지', '볼까', '을까', '려고', '면서', '거나')
 
 def _trim_particle(w):
     """끝에 붙은 조사/어미를 보수적으로 제거해 같은 단어를 하나로 모은다."""
@@ -289,7 +291,7 @@ st.markdown("")
 COLORS = {'SMS': '#4C72B0', 'LMS': '#DD8452', 'MMS': '#55A868'}
 
 KW_CATEGORIES = {
-    '개인화': ['회원님', '고객님', '선생님', '귀하', 'VIP', '등급'],
+    '개인화': ['고객명', '회원님', '고객님', '선생님', '귀하', 'VIP', '등급'],
     '행동기반': ['관심상품', '보셨던', '담으신', '담으셨던', '관심', '찜하신', '찜하셨던',
                 '검색하신', '구매하신', '방문하신', '확인하신', '재입고'],
     '혜택/할인': ['할인', '쿠폰', '적립', '무료배송', '무료', '특가', '혜택', '증정',
@@ -454,6 +456,22 @@ def insight_daily(daily, metric):
             else:
                 parts.append("효율과 발송량 간 뚜렷한 상관 없음 → 특정일 성과 차이는 캠페인 내용·타이밍 영향으로 해석.")
     return "  \n".join(parts)
+
+
+def build_keyword_perf(df_perf, keywords, min_cases=2):
+    """키워드별 포함 vs 미포함 ROAS 리프트 테이블 (풀링 ROAS 기준)."""
+    rows = []
+    for kw, freq in keywords:
+        mask = df_perf['문구'].str.contains(re.escape(kw), na=False)
+        has, no = df_perf[mask], df_perf[~mask]
+        if len(has) < min_cases or len(no) == 0:
+            continue
+        hr, nr = pooled_roas(has), pooled_roas(no)
+        if pd.isna(hr) or pd.isna(nr):
+            continue
+        rows.append({'키워드': kw, '카테고리': classify_keyword(kw), '빈도': freq,
+                     '포함건수': len(has), '포함_ROAS': hr, '미포함_ROAS': nr, 'ROAS리프트': hr - nr})
+    return pd.DataFrame(rows)
 
 
 def render_campaign_detail(sub, sort_col='ROAS'):
@@ -750,6 +768,10 @@ with tab3:
     df_kw_perf = df_kw.dropna(subset=['CTR', 'CR', 'ROAS', '문구'])
     df_kw_perf = df_kw_perf[df_kw_perf['ROAS'] > 0]
 
+    # 키워드 추출 + 키워드별 성과(리프트)를 한 번만 계산해 여러 섹션에서 재사용
+    kw_all = extract_keywords(df_kw['문구'].tolist(), top_n=top_n)
+    kw_perf_all = build_keyword_perf(df_kw_perf, kw_all, min_cases=2) if kw_all else pd.DataFrame()
+
     # ── 1. 카테고리별 평균 성과 (가장 먼저, 크게) ──────────────────────────────────────────────
     st.markdown('<div class="section-title">카테고리별 평균 성과</div>', unsafe_allow_html=True)
     st.caption("문구에 해당 카테고리 키워드가 포함된 캠페인의 평균 실적 — 어떤 문구 유형이 성과를 올리는지 파악")
@@ -796,9 +818,26 @@ with tab3:
                 '평균CTR': '{:.1%}', '평균CR': '{:.1%}', '평균ROAS': '{:.1f}%', '캠페인수': '{:.0f}'
             }), use_container_width=True, hide_index=True)
 
+        with st.expander("🔎 카테고리 안에서 어떤 키워드가 효과 좋은지 보기"):
+            if len(kw_perf_all):
+                cat_pick = st.selectbox("카테고리 선택", sorted(cat_agg['카테고리'].unique().tolist()), key='cat_kw_pick')
+                sub_kw = kw_perf_all[kw_perf_all['카테고리'] == cat_pick].sort_values('ROAS리프트', ascending=False)
+                if len(sub_kw):
+                    st.dataframe(
+                        sub_kw[['키워드', '빈도', '포함건수', '포함_ROAS', '미포함_ROAS', 'ROAS리프트']].style.format({
+                            '포함_ROAS': '{:,.0f}%', '미포함_ROAS': '{:,.0f}%', 'ROAS리프트': '{:+,.0f}%p',
+                        }), use_container_width=True, hide_index=True
+                    )
+                    bestk = sub_kw.iloc[0]
+                    st.caption(f"'{cat_pick}' 중 효과 1위 키워드: **{bestk['키워드']}** (ROAS {bestk['ROAS리프트']:+,.0f}%p, {bestk['포함건수']}건)")
+                else:
+                    st.caption(f"'{cat_pick}'에 표본 충분한 키워드가 없어요.")
+            else:
+                st.caption("키워드 성과 데이터가 부족합니다.")
+
     # ── 2. 키워드 빈도 ──────────────────────────────────────────────
     st.markdown('<div class="section-title">키워드 빈도 (카테고리별 색상)</div>', unsafe_allow_html=True)
-    kw_all = extract_keywords(df_kw['문구'].tolist(), top_n=top_n)
+    st.caption("개인화([고객명]·고객님)는 거의 모든 문구에 공통 포함돼 변별력이 없어 빈도에서 제외 — 위 카테고리 성과로 확인")
 
     if kw_all:
         kw_df = pd.DataFrame(kw_all, columns=['키워드', '빈도'])
@@ -825,23 +864,9 @@ with tab3:
     st.caption("문구에 키워드가 들어간 캠페인 vs 안 들어간 캠페인의 ROAS 차이(%p). "
                "충분한 표본만 비교하려 포함 3건 이상 키워드만, 상·하위만 표시")
 
-    if kw_all:
-        MIN_CASES = 3
-        kw_perf_rows = []
-        for kw, _ in kw_all[:40]:
-            mask = df_kw_perf['문구'].str.contains(re.escape(kw), na=False)
-            has, no = df_kw_perf[mask], df_kw_perf[~mask]
-            if len(has) >= MIN_CASES and len(no) > 0:
-                has_roas, no_roas = pooled_roas(has), pooled_roas(no)
-                if pd.isna(has_roas) or pd.isna(no_roas):
-                    continue
-                kw_perf_rows.append({
-                    '키워드': kw, '카테고리': classify_keyword(kw), '포함건수': len(has),
-                    'ROAS리프트': has_roas - no_roas,
-                    '포함_ROAS': has_roas, '미포함_ROAS': no_roas,
-                })
-        if kw_perf_rows:
-            kw_perf_df = pd.DataFrame(kw_perf_rows).sort_values('ROAS리프트', ascending=False)
+    if kw_all and len(kw_perf_all):
+        kw_perf_df = kw_perf_all[kw_perf_all['포함건수'] >= 3].sort_values('ROAS리프트', ascending=False)
+        if len(kw_perf_df):
             N = 8
             top = kw_perf_df.head(N)
             bot = kw_perf_df.tail(N)
@@ -879,6 +904,22 @@ with tab3:
                     }),
                     use_container_width=True, hide_index=True
                 )
+
+            with st.expander("📝 키워드 예시 문구 보기 (왜 성과를 올리/깎는지 납득)"):
+                kw_pick = st.selectbox("키워드 선택", kw_perf_df['키워드'].tolist(), key='kw_example')
+                row = kw_perf_df[kw_perf_df['키워드'] == kw_pick].iloc[0]
+                st.caption(
+                    f"'{kw_pick}' 포함 {int(row['포함건수'])}건 — 포함 ROAS {row['포함_ROAS']:,.0f}% vs "
+                    f"미포함 {row['미포함_ROAS']:,.0f}% (리프트 {row['ROAS리프트']:+,.0f}%p)"
+                )
+                ex = df_kw_perf[df_kw_perf['문구'].str.contains(re.escape(kw_pick), na=False)].copy()
+                ex_show = ex[['채널', '캠페인명', 'ROAS', '거래액', '문구']].sort_values('ROAS', ascending=False)
+                ex_show['문구'] = ex_show['문구'].astype(str).str.slice(0, 90)
+                st.dataframe(
+                    ex_show.style.format({'ROAS': '{:.0f}%', '거래액': fmt_won}),
+                    use_container_width=True, hide_index=True
+                )
+                st.caption("ROAS 높은 순. 실제 문구를 보면 이 키워드가 어떤 맥락에서 쓰였는지(예: 저관여 캠페인에 주로 등장) 확인됩니다.")
         else:
             st.caption("포함 3건 이상인 키워드가 부족해 리프트를 표시할 수 없어요.")
 
