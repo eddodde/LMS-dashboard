@@ -658,13 +658,23 @@ def mixed_chart(agg, x_col, perf_metric, vol_col='총모수', vol_label='총 발
         go.Scatter(
             x=agg[x_col], y=agg[perf_metric], name=perf_metric, mode='lines+markers+text',
             text=agg[perf_metric].apply(lambda v: fmt_val(v, perf_metric)),
-            textposition='top center', line=dict(color='#4C72B0', width=2.5),
+            textposition='top center', line=dict(color='#4C72B0', width=2.5), cliponaxis=False,
         ),
         secondary_y=False,
     )
-    fig.update_layout(height=400, xaxis_tickangle=-30, legend=dict(orientation='h', y=1.12))
+    # 범례를 플롯 위쪽 여백으로 빼고, 선 위 값 라벨이 범례와 안 겹치게 위쪽 여유 확보
+    fig.update_layout(
+        height=420, xaxis_tickangle=-30,
+        margin=dict(t=70, r=20, l=10, b=10),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+    )
     fig.update_yaxes(title_text=perf_metric, secondary_y=False)
     fig.update_yaxes(title_text=vol_label, secondary_y=True)
+    vals = pd.to_numeric(agg[perf_metric], errors='coerce').dropna()
+    if len(vals):
+        lo, hi = float(vals.min()), float(vals.max())
+        pad = (hi - lo) * 0.2 if hi > lo else (abs(hi) * 0.2 or 1)
+        fig.update_yaxes(range=[max(0, lo - pad), hi + pad], secondary_y=False)
     if perf_metric in ['평균CTR', '평균CR']:
         fig.update_yaxes(tickformat='.1%', secondary_y=False)
     elif perf_metric in MONEY_METRICS:
