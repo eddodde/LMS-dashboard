@@ -320,6 +320,9 @@ AF_MAP = {
 }
 AF_FIXED = {'EV00', 'EV20', 'EV21', 'EV25'}  # 매월 동일(고정) 코드
 
+# 표본이 너무 적은 구간(시간대·히트맵 셀)은 1건짜리 outlier가 효율을 왜곡하므로 제외
+MIN_SLOT_N = 2
+
 def classify_keyword(kw):
     for cat, words in KW_CATEGORIES.items():
         if any(w in kw for w in words):
@@ -653,7 +656,9 @@ with tab2:
     df_hour = df_with_perf.dropna(subset=['시간'])
     if len(df_hour) and df_hour['시간'].nunique() > 1:
         st.markdown('<div class="section-title">시간대별 성과 (발송량 vs 효율)</div>', unsafe_allow_html=True)
+        st.caption(f"발송 {MIN_SLOT_N}건 미만 시간대는 1건짜리 outlier 왜곡을 막기 위해 제외")
         hour_agg = perf_by(df_hour, '시간').sort_values('시간')
+        hour_agg = hour_agg[hour_agg['발송건수'] >= MIN_SLOT_N]   # 표본 적은 시간대 제외
         hour_agg['시간'] = hour_agg['시간'].apply(lambda h: f"{int(h)}시")
         hour_metric = st.radio("시간대별 효율 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='hour_m')
         st.plotly_chart(mixed_chart(hour_agg, '시간', hour_metric), use_container_width=True)
@@ -664,24 +669,26 @@ with tab2:
     # ── 요일 × 시간대 효율 히트맵 ──────────────────────────────────────────────
     df_dh = df_with_perf.dropna(subset=['요일', '시간'])
     if len(df_dh) and df_dh['시간'].nunique() > 1 and df_dh['요일'].nunique() > 1:
-        st.markdown('<div class="section-title">요일 × 시간대 효율 히트맵</div>', unsafe_allow_html=True)
-        st.caption("색이 진할수록 효율 높음 — 어떤 요일·시간 조합이 best인지 한눈에")
+        st.markdown('<div class="section-title">시간대 × 요일 효율 히트맵</div>', unsafe_allow_html=True)
+        st.caption(f"행 = 발송시간 · 열 = 요일 · 색이 진할수록 효율 높음 (발송 {MIN_SLOT_N}건 미만 셀은 표본 부족으로 제외)")
         heat_metric = st.radio("히트맵 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='heat_m')
         dh = perf_by(df_dh, ['요일', '시간'])
         dh['시간'] = dh['시간'].astype(int)
-        pivot = dh.pivot(index='요일', columns='시간', values=heat_metric)
-        pivot = pivot.reindex([d for d in 요일순서 if d in pivot.index])
-        pivot = pivot.reindex(sorted(pivot.columns), axis=1)
+        dh.loc[dh['발송건수'] < MIN_SLOT_N, heat_metric] = np.nan   # 표본 적은 셀 제외
+        pivot = dh.pivot(index='시간', columns='요일', values=heat_metric)
+        pivot = pivot.reindex(sorted(pivot.index))                       # 행: 시간 오름차순
+        pivot = pivot.reindex([d for d in 요일순서 if d in pivot.columns], axis=1)  # 열: 월~일
         txt = pivot.copy()
         for c in txt.columns:
             txt[c] = txt[c].map(lambda v: fmt_val(v, heat_metric) if pd.notna(v) else '')
         fig_heat = px.imshow(
             pivot, color_continuous_scale='Blues', aspect='auto',
-            labels=dict(x='발송 시간(시)', y='', color=heat_metric),
+            labels=dict(x='', y='발송 시간(시)', color=heat_metric),
         )
         fig_heat.update_traces(text=txt.values, texttemplate='%{text}', textfont_size=10)
-        fig_heat.update_xaxes(side='top', dtick=1)
-        fig_heat.update_layout(height=340, coloraxis_showscale=True)
+        fig_heat.update_xaxes(side='top')
+        fig_heat.update_yaxes(dtick=1)
+        fig_heat.update_layout(height=max(360, pivot.shape[0] * 34), coloraxis_showscale=True)
         st.plotly_chart(fig_heat, use_container_width=True)
         bc_df = dh.dropna(subset=[heat_metric])
         if len(bc_df):
