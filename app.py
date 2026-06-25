@@ -818,22 +818,38 @@ with tab3:
                 '평균CTR': '{:.1%}', '평균CR': '{:.1%}', '평균ROAS': '{:.1f}%', '캠페인수': '{:.0f}'
             }), use_container_width=True, hide_index=True)
 
-        with st.expander("🔎 카테고리 안에서 어떤 키워드가 효과 좋은지 보기"):
-            if len(kw_perf_all):
-                cat_pick = st.selectbox("카테고리 선택", sorted(cat_agg['카테고리'].unique().tolist()), key='cat_kw_pick')
-                sub_kw = kw_perf_all[kw_perf_all['카테고리'] == cat_pick].sort_values('ROAS리프트', ascending=False)
-                if len(sub_kw):
-                    st.dataframe(
-                        sub_kw[['키워드', '빈도', '포함건수', '포함_ROAS', '미포함_ROAS', 'ROAS리프트']].style.format({
-                            '포함_ROAS': '{:,.0f}%', '미포함_ROAS': '{:,.0f}%', 'ROAS리프트': '{:+,.0f}%p',
-                        }), use_container_width=True, hide_index=True
-                    )
-                    bestk = sub_kw.iloc[0]
-                    st.caption(f"'{cat_pick}' 중 효과 1위 키워드: **{bestk['키워드']}** (ROAS {bestk['ROAS리프트']:+,.0f}%p, {bestk['포함건수']}건)")
-                else:
-                    st.caption(f"'{cat_pick}'에 표본 충분한 키워드가 없어요.")
-            else:
-                st.caption("키워드 성과 데이터가 부족합니다.")
+        with st.expander("🔎 카테고리 안에서 어떤 키워드/캠페인이 성과를 만들었는지 보기"):
+            cat_pick = st.selectbox("카테고리 선택", cat_agg['카테고리'].tolist(), key='cat_kw_pick')
+            # 카테고리 평균성과와 동일 기준 — 그 카테고리로 분류된 캠페인을 직접 사용
+            cat_mask = df_kw_perf['문구'].apply(lambda t: cat_pick in get_text_categories(t))
+            cat_campaigns = df_kw_perf[cat_mask]
+            st.caption(f"'{cat_pick}' 분류 캠페인 {len(cat_campaigns)}건 (위 카테고리 평균성과와 동일 집합)")
+
+            # 카테고리 정의 단어별 성과 (실제 문구에 등장한 것만)
+            words = KW_CATEGORIES.get(cat_pick, [])
+            wrows = []
+            for w in words:
+                m = df_kw_perf['문구'].str.contains(re.escape(w), na=False)
+                has, no = df_kw_perf[m], df_kw_perf[~m]
+                if len(has) == 0:
+                    continue
+                hr, nr = pooled_roas(has), pooled_roas(no)
+                wrows.append({'키워드': w, '포함건수': len(has), '포함_ROAS': hr,
+                              'ROAS리프트': (hr - nr) if (pd.notna(hr) and pd.notna(nr)) else np.nan})
+            if wrows:
+                wdf = pd.DataFrame(wrows).sort_values('포함_ROAS', ascending=False)
+                st.markdown("**카테고리 정의 단어별 성과** (포함건수 적으면 참고만)")
+                st.dataframe(
+                    wdf.style.format({'포함_ROAS': '{:,.0f}%', 'ROAS리프트': '{:+,.0f}%p', '포함건수': '{:,}'}),
+                    use_container_width=True, hide_index=True
+                )
+            elif cat_pick != '상품/기타':
+                st.caption("이 카테고리 정의 단어가 실제 문구에 등장하지 않았어요. (분류는 다른 단어로 됐을 수 있음)")
+
+            # 실제 캠페인 직접 확인 — 유효성 판단용
+            if len(cat_campaigns):
+                st.markdown(f"**'{cat_pick}' 분류 캠페인 (ROAS순)**")
+                render_campaign_detail(cat_campaigns)
 
     # ── 2. 키워드 빈도 ──────────────────────────────────────────────
     st.markdown('<div class="section-title">키워드 빈도 (카테고리별 색상)</div>', unsafe_allow_html=True)
