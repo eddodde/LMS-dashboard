@@ -5,7 +5,72 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import re
+import json
+import datetime
+import pathlib
 from collections import Counter
+
+
+# ── AI 문구 개선 (Claude API) — 키가 있을 때만 동작, 하루 제한 ──────────────────────────
+AI_MODEL = "claude-haiku-4-5"      # 프로토타입: 저비용 모델
+AI_DAILY_LIMIT = 3                  # 하루 호출 한도 (전체 공용)
+_AI_USAGE = pathlib.Path("ai_usage.json")
+
+@st.cache_resource
+def get_claude():
+    """API 키가 Secrets에 있으면 Anthropic 클라이언트, 없으면 None."""
+    try:
+        key = st.secrets.get("ANTHROPIC_API_KEY")
+    except Exception:
+        key = None
+    if not key:
+        return None
+    try:
+        import anthropic
+        return anthropic.Anthropic(api_key=key)
+    except Exception:
+        return None
+
+def ai_calls_left():
+    try:
+        d = json.loads(_AI_USAGE.read_text())
+    except Exception:
+        d = {}
+    if d.get("date") != datetime.date.today().isoformat():
+        return AI_DAILY_LIMIT
+    return max(0, AI_DAILY_LIMIT - int(d.get("count", 0)))
+
+def ai_bump():
+    today = datetime.date.today().isoformat()
+    try:
+        d = json.loads(_AI_USAGE.read_text())
+    except Exception:
+        d = {}
+    if d.get("date") != today:
+        d = {"date": today, "count": 0}
+    d["count"] = int(d.get("count", 0)) + 1
+    try:
+        _AI_USAGE.write_text(json.dumps(d))
+    except Exception:
+        pass
+
+def ai_improve_message(text, hint=""):
+    client = get_claude()
+    if client is None:
+        return None
+    resp = client.messages.create(
+        model=AI_MODEL,
+        max_tokens=1500,
+        system=(
+            "너는 LF몰 CRM 문자(LMS) 카피라이터다. 한국 정보통신망법을 지킨다"
+            "((광고) 표기·전송자 명칭·무료 수신거부 안내). LMS는 길이 제약이 있으니 간결하게, "
+            "한 줄 핵심 혜택 + 명확한 CTA를 살린다. "
+            "개선안 2~3개를 제시하고 각각 '왜 더 나은지' 한 줄로 설명해라. 한국어로 답해라."
+        ),
+        messages=[{"role": "user",
+                   "content": f"다음 LMS 문구를 개선해줘.\n\n[원문]\n{text}\n\n[참고(데이터 진단)]\n{hint}"}],
+    )
+    return "".join(b.text for b in resp.content if b.type == "text")
 
 st.set_page_config(
     page_title="LMS 발송 성과 대시보드",
@@ -1270,6 +1335,27 @@ elif nav == "🔤 문구 키워드 분석":
                 for _, r in ref.iterrows():
                     st.markdown(f"- **ROAS {r['ROAS']:.0f}%** · {str(r['문구'])[:110]}")
             st.caption("※ 과거 발송 데이터 기반 제안이지 AI가 새로 쓴 문구는 아닙니다. 실제 적용 전 A/B로 검증 권장.")
+
+        # ── 🤖 AI 문구 개선 (Claude Haiku) — 키 있을 때만 / 하루 제한 ──────────────
+        st.markdown("---")
+        _cats_hint = ", ".join(cats) if cats else "특이 신호 없음"
+        if get_claude() is None:
+            st.caption("🔒 **AI 문구 개선**: Secrets에 ANTHROPIC_API_KEY를 넣으면 활성화됩니다 (프로토타입: Haiku, 하루 3회).")
+        else:
+            left = ai_calls_left()
+            if left <= 0:
+                st.warning(f"오늘 AI 개선 한도({AI_DAILY_LIMIT}회)를 모두 사용했어요. 내일 다시 가능합니다.")
+            elif st.button(f"🤖 AI로 문구 개선안 받기 (오늘 {left}회 남음)", key="ai_improve_btn"):
+                with st.spinner("Claude(Haiku)가 문구를 다듬는 중…"):
+                    try:
+                        out = ai_improve_message(diag_txt, hint=_cats_hint)
+                        ai_bump()
+                    except Exception as e:
+                        out = None
+                        st.error(f"AI 호출 실패: {e}")
+                if out:
+                    st.markdown(out)
+                    st.caption("※ AI 생성안입니다. 발송 전 (광고) 표기·무료수신거부 등 컴플라이언스와 사실관계를 꼭 확인하세요.")
 
 
 # ══ 캠페인 상세 ══════════════════════════════════
