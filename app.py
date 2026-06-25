@@ -1155,6 +1155,39 @@ elif nav == "🔤 문구 키워드 분석":
         else:
             st.caption("과거 데이터에 매칭되는 키워드가 없어요. (신규 표현이거나 상품명 위주 문구)")
 
+        # ── 개선 제안 + 잘 나간 예시 문구 (과거 데이터 기반, AI 창작 아님) ──
+        st.markdown("**💡 개선 제안 & 추천 문구**")
+        cat_perf = {}
+        for c in KW_CATEGORIES:
+            if c in ('상품/기타', '개인화'):
+                continue
+            sub = df_kw_perf[df_kw_perf['문구'].apply(lambda t: c in get_text_categories(t))]
+            if len(sub) >= MIN_KW_CASES:
+                cat_perf[c] = (pooled_roas(sub), len(sub))
+        present_set = set(cats_all)
+        tips = []
+        for c, (roas, n) in sorted(cat_perf.items(), key=lambda x: -(x[1][0] if pd.notna(x[1][0]) else -1)):
+            if c not in present_set and pd.notna(roas) and pd.notna(base_roas) and roas >= base_roas * 1.1:
+                ex = ' / '.join(KW_CATEGORIES[c][:3])
+                tips.append(f"➕ **{c}** 표현 추가 검토 — 과거 이 요소가 든 문구 ROAS {roas:,.0f}% (전체 {base_roas:,.0f}%). 예: {ex}")
+            if len(tips) >= 3:
+                break
+        for c in cats:
+            if c in cat_perf and pd.notna(cat_perf[c][0]) and cat_perf[c][0] <= base_roas * 0.87:
+                tips.append(f"⚠️ **{c}** 포함 — 과거 ROAS {cat_perf[c][0]:,.0f}%로 낮은 편. 오퍼·타겟과 함께 점검.")
+        if tips:
+            for t in tips:
+                st.markdown("- " + t)
+        else:
+            st.caption("뚜렷한 개선 포인트는 없어요. (이미 고성과 요소 포함이거나 변별 신호가 적음)")
+
+        ref = sim.sort_values('ROAS', ascending=False).head(3)
+        if len(ref):
+            st.markdown("**참고 — 비슷한 유형에서 잘 나간 실제 문구 (ROAS 상위):**")
+            for _, r in ref.iterrows():
+                st.markdown(f"- **ROAS {r['ROAS']:.0f}%** · {str(r['문구'])[:110]}")
+        st.caption("※ 과거 발송 데이터 기반 제안이지 AI가 새로 쓴 문구는 아닙니다. 실제 적용 전 A/B로 검증 권장.")
+
 
 # ══ 캠페인 상세 ══════════════════════════════════
 elif nav == "🗂 캠페인 상세":
