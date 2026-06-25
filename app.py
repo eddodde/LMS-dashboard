@@ -503,6 +503,33 @@ def cmp_delta(key, va, vb):
     return f"{d:+,.0f}"
 
 
+def cmp_item_comment(mine, other):
+    """비교 항목 하나의 성격을 한 줄로 — 상대 대비 강·약점과 규모."""
+    eff = ['평균ROAS', '1인당거래액', '평균CTR', '평균CR']
+    wins = [k for k in eff if pd.notna(mine[k]) and pd.notna(other[k]) and mine[k] > other[k]]
+    losses = [k for k in eff if pd.notna(mine[k]) and pd.notna(other[k]) and mine[k] < other[k]]
+    if len(wins) >= 3:
+        head = "🟢 효율 우위형"
+    elif len(losses) >= 3:
+        head = "🔴 효율 열위형"
+    else:
+        head = "🟡 혼조형"
+    reach = "도달 큼" if mine['총모수'] >= other['총모수'] else "도달 작음"
+    # ROAS 배수 한마디
+    extra = ""
+    if pd.notna(mine['평균ROAS']) and pd.notna(other['평균ROAS']) and other['평균ROAS'] > 0:
+        ratio = mine['평균ROAS'] / other['평균ROAS']
+        if ratio >= 1.2:
+            extra = f" · ROAS 상대 대비 {ratio:.1f}배"
+        elif ratio <= 0.83:
+            extra = f" · ROAS 상대의 {ratio:.0%} 수준"
+    strong = "·".join(k.replace('평균', '') for k in wins[:3])
+    weak = "·".join(k.replace('평균', '') for k in losses[:2])
+    bits = [f"강점 {strong}" if wins else "", f"약점 {weak}" if losses else ""]
+    bits = [x for x in bits if x]
+    return f"{head} · {reach}{extra}" + (" — " + ", ".join(bits) if bits else "")
+
+
 def build_keyword_perf(df_perf, keywords, min_cases=2):
     """키워드별 포함 vs 미포함 ROAS 리프트 테이블 (풀링 ROAS 기준)."""
     rows = []
@@ -1296,6 +1323,7 @@ with tab6:
                     st.caption(f"발송 {mine['발송건수']:,}건 · 모수 {mine['총모수']:,.0f}명")
                     for k in METRICS:
                         st.metric(k, cmp_fmt(k, mine[k]), delta=cmp_delta(k, mine[k], other[k]))
+                    st.caption(cmp_item_comment(mine, other))
 
             # 종합 판정 (효율 지표 승수)
             awin = [k for k in EFF if pd.notna(ma[k]) and pd.notna(mb[k]) and ma[k] > mb[k]]
