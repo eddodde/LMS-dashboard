@@ -31,6 +31,7 @@ st.markdown("""
         font-size: 17px; font-weight: 700; color: #1a1a2e;
         margin: 24px 0 12px 0; padding-bottom: 6px;
         border-bottom: 2px solid #e9ecef;
+        scroll-margin-top: 60px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -226,6 +227,22 @@ def to_백만(v):
     return pd.to_numeric(v, errors='coerce') / 1e6
 
 
+def sec_title(label, anchor):
+    """앵커(id) 달린 섹션 제목 — 사이드바 세부 점프용."""
+    st.markdown(f'<div class="section-title" id="{anchor}">{label}</div>', unsafe_allow_html=True)
+
+
+# 페이지별 세부 섹션 (anchor, 표시라벨) — 사이드바 목차에 사용
+SECTIONS = {
+    "📡 채널별 분석": [("p1-compare", "채널 효율 비교"), ("p1-summary", "채널별 종합 성과"), ("p1-daily", "일자별 추이")],
+    "📅 월별 트렌드": [("p2-monthly", "월별 추이"), ("p2-dow", "요일별"), ("p2-hour", "시간대별"), ("p2-heat", "요일×시간 히트맵")],
+    "🔤 문구 키워드 분석": [("p3-cat", "카테고리별 성과"), ("p3-freq", "키워드 빈도"), ("p3-lift", "성과 키워드"), ("p3-diag", "문구 진단")],
+    "🗂 캠페인 상세": [("p4-table", "캠페인 상세표"), ("p4-recurring", "반복 캠페인")],
+    "🏷 AF코드별 효율": [("p5-eff", "AF코드별 효율"), ("p5-scatter", "타겟 vs 거래액")],
+    "⚖️ A vs B 비교": [("p6-compare", "A vs B 비교")],
+}
+
+
 # ── 사이드바 ──────────────────────────────────────────────
 with st.sidebar:
     st.title("📱 LMS 대시보드")
@@ -257,6 +274,13 @@ with st.sidebar:
     }
     nav = st.radio("📂 분석 메뉴", PAGES, key='nav')
     st.caption(PAGE_DESC.get(nav, ""))
+
+    # 현재 페이지의 세부 섹션으로 바로 점프
+    _secs = SECTIONS.get(nav, [])
+    if _secs:
+        links = " · ".join(f'<a href="#{a}" style="text-decoration:none">{lbl}</a>' for a, lbl in _secs)
+        st.markdown(f"**↓ 바로가기**<br><span style='font-size:0.85em'>{links}</span>", unsafe_allow_html=True)
+
     st.markdown("---")
     st.caption("데이터 기준: 발송일 기준")
 
@@ -682,12 +706,12 @@ if nav == "📡 채널별 분석":
     )
 
     if num_years >= 2:
-        st.markdown('<div class="section-title">채널 × 연도별 효율 비교 (전년비)</div>', unsafe_allow_html=True)
+        sec_title('채널 × 연도별 효율 비교 (전년비)', 'p1-compare')
         plot_df = perf_by(df_with_perf, ['연도', '채널'])
         plot_df['연도'] = plot_df['연도'].astype(str)
         x_col = '연도'
     else:
-        st.markdown('<div class="section-title">채널 × 월별 효율 비교</div>', unsafe_allow_html=True)
+        sec_title('채널 × 월별 효율 비교', 'p1-compare')
         plot_df = perf_by(df_with_perf, ['월', '채널']).sort_values('월')
         x_col = '월'
 
@@ -708,7 +732,7 @@ if nav == "📡 채널별 분석":
     st.info(insight_channel_compare(df_with_perf, plot_df, x_col, cmp_metric, num_years))
 
     # ── 채널별 종합 성과 테이블 ──────────────────────────────────────────────
-    st.markdown('<div class="section-title">채널별 종합 성과</div>', unsafe_allow_html=True)
+    sec_title('채널별 종합 성과', 'p1-summary')
 
     ch_perf = perf_by(df_with_perf, '채널')
     ch_show = ch_perf[['채널', '발송건수', '총모수', '평균CTR', '평균CR',
@@ -724,7 +748,7 @@ if nav == "📡 채널별 분석":
     st.info(insight_channel_table(ch_perf))
 
     # ── 일자별 추이 (채널 분리) + 튀는 날 캠페인 드릴다운 ──────────────────────────────
-    st.markdown('<div class="section-title">일자별 효율 추이 (채널별)</div>', unsafe_allow_html=True)
+    sec_title('일자별 효율 추이 (채널별)', 'p1-daily')
     day_metric = st.selectbox(
         "지표 선택",
         ['평균ROAS', '1인당거래액', '객단가', '평균CTR', '평균CR', '발송건수', '총모수'],
@@ -773,7 +797,7 @@ if nav == "📡 채널별 분석":
 
 # ══ 월별 트렌드 ══════════════════════════════════
 elif nav == "📅 월별 트렌드":
-    st.markdown('<div class="section-title">월별 발송량 vs 효율 추이</div>', unsafe_allow_html=True)
+    sec_title('월별 발송량 vs 효율 추이', 'p2-monthly')
     st.caption("회색 막대 = 총 발송모수(우축) / 파란 선 = 효율 지표(좌축)")
 
     monthly_total = perf_by(df_with_perf, '월').sort_values('월')
@@ -787,7 +811,7 @@ elif nav == "📅 월별 트렌드":
     st.info(insight_volume_perf(monthly_total, '월', mix_metric, lambda x: f"{x}"))
 
     # ── 요일별 성과 (혼합: 막대=발송모수 / 선=효율) ──────────────────────────────
-    st.markdown('<div class="section-title">요일별 성과 (발송량 vs 효율)</div>', unsafe_allow_html=True)
+    sec_title('요일별 성과 (발송량 vs 효율)', 'p2-dow')
     st.caption("회색 막대 = 총 발송모수(물량) / 파란 선 = 효율 지표 — 주말이 높은 게 물량 때문인지 효율 때문인지 구분")
 
     요일순서 = ['월', '화', '수', '목', '금', '토', '일']
@@ -805,7 +829,7 @@ elif nav == "📅 월별 트렌드":
     # ── 시간대별 성과 (혼합) ──────────────────────────────────────────────
     df_hour = df_with_perf.dropna(subset=['시간'])
     if len(df_hour) and df_hour['시간'].nunique() > 1:
-        st.markdown('<div class="section-title">시간대별 성과 (발송량 vs 효율)</div>', unsafe_allow_html=True)
+        sec_title('시간대별 성과 (발송량 vs 효율)', 'p2-hour')
         st.caption(f"발송 {MIN_SLOT_N}건 미만 시간대는 1건짜리 outlier 왜곡을 막기 위해 제외  \n"
                    "⚠️ 시간대 효율은 '그 시간 자체'가 아니라 '그 시간에 주로 보낸 캠페인 성격'과 섞여 있음 "
                    "(예: 10시=선착순 쿠폰). 아래 드릴다운으로 무엇을 보냈는지 확인 권장")
@@ -825,7 +849,7 @@ elif nav == "📅 월별 트렌드":
     # ── 요일 × 시간대 효율 히트맵 ──────────────────────────────────────────────
     df_dh = df_with_perf.dropna(subset=['요일', '시간'])
     if len(df_dh) and df_dh['시간'].nunique() > 1 and df_dh['요일'].nunique() > 1:
-        st.markdown('<div class="section-title">시간대 × 요일 효율 히트맵</div>', unsafe_allow_html=True)
+        sec_title('시간대 × 요일 효율 히트맵', 'p2-heat')
         st.caption(f"행 = 발송시간 · 열 = 요일 · 색이 진할수록 효율 높음 (발송 {MIN_SLOT_N}건 미만 셀은 표본 부족으로 제외)")
         heat_metric = st.radio("히트맵 지표", ['평균ROAS', '1인당거래액', '평균CTR', '평균CR'], horizontal=True, key='heat_m')
         dh = perf_by(df_dh, ['요일', '시간'])
@@ -883,7 +907,7 @@ elif nav == "🔤 문구 키워드 분석":
     kw_perf_all = build_keyword_perf(df_kw_perf, kw_all, min_cases=2) if kw_all else pd.DataFrame()
 
     # ── 1. 카테고리별 평균 성과 (가장 먼저, 크게) ──────────────────────────────────────────────
-    st.markdown('<div class="section-title">카테고리별 평균 성과</div>', unsafe_allow_html=True)
+    sec_title('카테고리별 평균 성과', 'p3-cat')
     st.caption("문구에 해당 카테고리 키워드가 포함된 캠페인의 평균 실적 — 어떤 문구 유형이 성과를 올리는지 파악")
 
     cat_rows = []
@@ -966,7 +990,7 @@ elif nav == "🔤 문구 키워드 분석":
                 render_campaign_detail(cat_campaigns)
 
     # ── 2. 키워드 빈도 ──────────────────────────────────────────────
-    st.markdown('<div class="section-title">키워드 빈도 (카테고리별 색상)</div>', unsafe_allow_html=True)
+    sec_title('키워드 빈도 (카테고리별 색상)', 'p3-freq')
     st.caption("개인화([고객명]·고객님)는 거의 모든 문구에 공통 포함돼 변별력이 없어 빈도에서 제외 — 위 카테고리 성과로 확인")
 
     if kw_all:
@@ -990,7 +1014,7 @@ elif nav == "🔤 문구 키워드 분석":
             st.markdown("**상품/기타**: 위 분류에 해당하지 않는 상품명·소재명 등")
 
     # ── 3. 키워드별 성과 리프트 ──────────────────────────────────────────────
-    st.markdown('<div class="section-title">ROAS와 함께 등장하는 키워드 (상관, 인과 아님)</div>', unsafe_allow_html=True)
+    sec_title('ROAS와 함께 등장하는 키워드 (상관, 인과 아님)', 'p3-lift')
     st.caption(f"키워드 포함 vs 미포함 캠페인의 ROAS 차이(%p) · 포함 {MIN_KW_CASES}건 이상만.  \n"
                "⚠️ 이건 '효과'가 아니라 '상관'입니다 — 키워드가 ROAS를 올린 게 아니라, 그 키워드를 주로 쓰는 "
                "캠페인의 오퍼·타겟이 ROAS를 좌우했을 가능성이 큼. 단정 말고 가설로만 활용하세요.")
@@ -1055,7 +1079,7 @@ elif nav == "🔤 문구 키워드 분석":
             st.caption(f"포함 {MIN_KW_CASES}건 이상인 키워드가 부족해 리프트를 표시할 수 없어요.")
 
     # ── 4. 문구 진단기 (입력 → 예상 효율 + 키워드 코멘트) ──────────────────────────────
-    st.markdown('<div class="section-title">✍️ 문구 진단 — 입력하면 예상 효율 + 키워드 코멘트</div>', unsafe_allow_html=True)
+    sec_title('✍️ 문구 진단 — 입력하면 예상 효율 + 키워드 코멘트', 'p3-diag')
     st.caption("과거 발송 데이터 기반 '예상'(상관)이지 보장은 아닙니다. 표본 적은 키워드는 참고만.")
     diag_txt = st.text_area("진단할 문구 입력", key='diag_txt', height=90,
                             placeholder="예: (광고)[LF몰] 겨울 시즌오프 단 3일 최대 50% 할인 쿠폰 ▷ 지금 확인")
@@ -1111,7 +1135,7 @@ elif nav == "🔤 문구 키워드 분석":
 
 # ══ 캠페인 상세 ══════════════════════════════════
 elif nav == "🗂 캠페인 상세":
-    st.markdown('<div class="section-title">캠페인별 상세 데이터</div>', unsafe_allow_html=True)
+    sec_title('캠페인별 상세 데이터', 'p4-table')
 
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
@@ -1161,13 +1185,13 @@ elif nav == "🗂 캠페인 상세":
     num_years_rec = df_rec_base['연도'].nunique()
 
     if num_years_rec >= 2:
-        st.markdown('<div class="section-title">🔁 반복 캠페인 연도별 전년비</div>', unsafe_allow_html=True)
+        sec_title('🔁 반복 캠페인 연도별 전년비', 'p4-recurring')
         st.caption("핵심 키워드 기준 그룹핑 | 2개 이상 연도에 걸쳐 발송된 캠페인만 표시")
         group_yr_counts = df_rec_base.groupby('캠페인그룹')['연도'].nunique()
         recurring_groups = sorted(group_yr_counts[group_yr_counts >= 2].index.tolist())
         x_col_rec = '연도'
     else:
-        st.markdown('<div class="section-title">🔁 반복 캠페인 월별 성과 추이</div>', unsafe_allow_html=True)
+        sec_title('🔁 반복 캠페인 월별 성과 추이', 'p4-recurring')
         st.caption("핵심 키워드 기준 그룹핑 | 2개월 이상 발송된 캠페인만 표시")
         group_mo_counts = df_rec_base.groupby('캠페인그룹')['월'].nunique()
         recurring_groups = sorted(group_mo_counts[group_mo_counts >= 2].index.tolist())
@@ -1248,7 +1272,7 @@ elif nav == "🗂 캠페인 상세":
 
 # ══ AF코드별 효율 ══════════════════════════════════
 elif nav == "🏷 AF코드별 효율":
-    st.markdown('<div class="section-title">AF코드별 효율 비교</div>', unsafe_allow_html=True)
+    sec_title('AF코드별 효율 비교', 'p5-eff')
 
     # 제공된 고정 AF코드(AF_MAP)만 집계. 같은 캠페인명 코드(EV20·EV21=승급유도)는 묶는다.
     has_af = 'AF코드' in df.columns and df['AF코드'].notna().any()
@@ -1319,7 +1343,7 @@ elif nav == "🏷 AF코드별 효율":
         st.plotly_chart(fig_af, use_container_width=True)
 
         # 효율 산점도: 타겟(모수) vs 거래액
-        st.markdown('<div class="section-title">타겟 규모 vs 거래액 (버블=ROAS)</div>', unsafe_allow_html=True)
+        sec_title('타겟 규모 vs 거래액 (버블=ROAS)', 'p5-scatter')
         st.caption("점선(평균 효율)보다 위에 있으면 모수 1명당 거래액이 평균보다 높다는 뜻")
         scatter_df = code_df.dropna(subset=['총모수', '총거래액'])
         scatter_df = scatter_df[scatter_df['총모수'] > 0]
@@ -1372,7 +1396,7 @@ elif nav == "🏷 AF코드별 효율":
 
 # ══ A vs B 비교 ══════════════════════════════════
 elif nav == "⚖️ A vs B 비교":
-    st.markdown('<div class="section-title">캠페인 비교 (A vs B)</div>', unsafe_allow_html=True)
+    sec_title('캠페인 비교 (A vs B)', 'p6-compare')
     st.caption("기준을 정하고 두 항목을 골라 효율을 나란히 비교 — 요금제 비교처럼 어느 쪽이 더 나은지 한눈에")
 
     basis = st.radio("비교 기준", ['채널', 'AF코드(캠페인)', '캠페인 그룹'], horizontal=True, key='cmp_basis')
