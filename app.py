@@ -1488,3 +1488,31 @@ elif nav == "⚖️ A vs B 비교":
                 verdict = f"효율 {len(awin)}:{len(bwin)} 무승부 — 목적 따라 선택"
             reach = a if ma['총모수'] > mb['총모수'] else b
             st.info(f"⚖️ {verdict} · 도달(모수)은 **{reach}**가 큼 — 효율과 규모는 다른 축이니 목적에 맞게 판단.")
+
+
+# ── 스크롤스파이: 현재 보는 섹션의 사이드바 하위 메뉴에 밑줄 (베스트-에포트 JS) ──────────────
+st.components.v1.html(
+    """
+    <script>
+    const doc = window.parent.document;
+    function spy(){
+      const titles = Array.from(doc.querySelectorAll('.section-title')).filter(t => t.id);
+      if(!titles.length) return;
+      let active = titles[0].id;
+      for(const t of titles){
+        if(t.getBoundingClientRect().top <= 140) active = t.id;
+      }
+      doc.querySelectorAll('a.subnav-link').forEach(a=>{
+        const on = a.getAttribute('href') === '#'+active;
+        a.style.textDecoration = on ? 'underline' : 'none';
+        a.style.fontWeight = on ? '700' : '400';
+        a.style.color = on ? '#163E78' : '#2E68B0';
+      });
+    }
+    window.parent.addEventListener('scroll', spy, true);
+    setInterval(spy, 400);
+    setTimeout(spy, 300);
+    </script>
+    """,
+    height=0,
+)
