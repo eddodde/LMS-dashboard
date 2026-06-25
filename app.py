@@ -503,6 +503,36 @@ def cmp_delta(key, va, vb):
     return f"{d:+,.0f}"
 
 
+METRIC_META = {
+    '평균ROAS': ('투입 대비 회수', 'eff'),
+    '1인당거래액': ('타겟 1명당 매출', 'eff'),
+    '객단가': ('구매고객 1명당 매출', 'eff'),
+    '평균CTR': ('클릭률', 'eff'),
+    '평균CR': ('구매 전환율', 'eff'),
+    '총거래액': ('총 매출', 'scale'),
+    '총모수': ('도달 규모', 'scale'),
+    '발송건수': ('발송 횟수', 'scale'),
+}
+
+def metric_comment(k, va, vb, a, b):
+    """지표 한 줄 코멘트 — 어느 쪽이 얼마나, 무슨 의미인지."""
+    meaning, kind = METRIC_META.get(k, (k, 'eff'))
+    if pd.isna(va) or pd.isna(vb):
+        return "비교 불가(데이터 없음)"
+    if va == vb:
+        return f"동일 · {meaning}"
+    win = a if va > vb else b
+    hi, lo = max(va, vb), min(va, vb)
+    if k in ('평균CTR', '평균CR'):
+        mag = f"+{abs(va - vb):.1%}p"
+    elif lo > 0:
+        mag = f"{hi / lo:.1f}배"
+    else:
+        mag = f"{hi - lo:,.0f} 차"
+    tail = " (규모 — 효율 아님)" if kind == 'scale' else ""
+    return f"**{win}** {mag} · {meaning}{tail}"
+
+
 def cmp_item_comment(mine, other):
     """비교 항목 하나의 성격을 한 줄로 — 상대 대비 강·약점과 규모."""
     eff = ['평균ROAS', '1인당거래액', '평균CTR', '평균CR']
@@ -1316,38 +1346,36 @@ with tab6:
             METRICS = ['평균ROAS', '1인당거래액', '객단가', '평균CTR', '평균CR', '총거래액', '총모수', '발송건수']
             EFF = ['평균ROAS', '1인당거래액', '객단가', '평균CTR', '평균CR']  # 효율(높을수록 우세)
 
-            cc1, cc2 = st.columns(2)
-            for col, name, mine, other in [(cc1, a, ma, mb), (cc2, b, mb, ma)]:
-                with col:
-                    st.markdown(f"#### {name}")
-                    st.caption(f"발송 {mine['발송건수']:,}건 · 모수 {mine['총모수']:,.0f}명")
-                    for k in METRICS:
-                        st.metric(k, cmp_fmt(k, mine[k]), delta=cmp_delta(k, mine[k], other[k]))
-                    st.caption(cmp_item_comment(mine, other))
+            # 지표별 한 행에 A·B 나란히 + 행마다 코멘트 (좌우로 안 멀고, 세로로 안 길게)
+            def winner(k):
+                if pd.isna(ma[k]) or pd.isna(mb[k]) or ma[k] == mb[k]:
+                    return '='
+                return 'A' if ma[k] > mb[k] else 'B'
+            tbl = pd.DataFrame({
+                '지표': METRICS,
+                f'A: {a}': [cmp_fmt(k, ma[k]) for k in METRICS],
+                f'B: {b}': [cmp_fmt(k, mb[k]) for k in METRICS],
+                '우세': [winner(k) for k in METRICS],
+                '코멘트': [metric_comment(k, ma[k], mb[k], a, b).replace('**', '') for k in METRICS],
+            })
 
-            # 종합 판정 (효율 지표 승수)
+            def hl(row):
+                w = row['우세']
+                out = [''] * len(row)
+                if w in ('A', 'B'):
+                    col = f'A: {a}' if w == 'A' else f'B: {b}'
+                    out[list(row.index).index(col)] = 'background-color:#E7F3EC;font-weight:600'
+                return out
+            st.dataframe(tbl.style.apply(hl, axis=1), use_container_width=True, hide_index=True)
+
+            # 종합 판정 (효율 지표만 집계)
             awin = [k for k in EFF if pd.notna(ma[k]) and pd.notna(mb[k]) and ma[k] > mb[k]]
             bwin = [k for k in EFF if pd.notna(ma[k]) and pd.notna(mb[k]) and mb[k] > ma[k]]
             if len(awin) > len(bwin):
-                verdict = f"**{a}** 효율 우세 (효율 {len(awin)}:{len(bwin)})"
+                verdict = f"**{a}** 효율 우세 ({len(awin)}:{len(bwin)})"
             elif len(bwin) > len(awin):
-                verdict = f"**{b}** 효율 우세 (효율 {len(bwin)}:{len(awin)})"
+                verdict = f"**{b}** 효율 우세 ({len(bwin)}:{len(awin)})"
             else:
-                verdict = f"효율 지표 {len(awin)}:{len(bwin)} 무승부 — 목적에 따라 선택"
+                verdict = f"효율 {len(awin)}:{len(bwin)} 무승부 — 목적 따라 선택"
             reach = a if ma['총모수'] > mb['총모수'] else b
-            st.info(
-                f"⚖️ {verdict}.  \n"
-                f"· {a} 우세 지표: {', '.join(awin) if awin else '없음'}  \n"
-                f"· {b} 우세 지표: {', '.join(bwin) if bwin else '없음'}  \n"
-                f"· 도달(모수)은 **{reach}**가 큼 — 효율과 규모는 다른 축이니 목적(효율 vs 도달)에 맞게 판단하세요."
-            )
-
-            with st.expander("비교 표 (숫자)"):
-                tbl = pd.DataFrame({
-                    '지표': METRICS,
-                    a: [cmp_fmt(k, ma[k]) for k in METRICS],
-                    b: [cmp_fmt(k, mb[k]) for k in METRICS],
-                    '우세': [('=' if (pd.isna(ma[k]) or pd.isna(mb[k]) or ma[k] == mb[k])
-                              else (a if ma[k] > mb[k] else b)) for k in METRICS],
-                })
-                st.dataframe(tbl, use_container_width=True, hide_index=True)
+            st.info(f"⚖️ {verdict} · 도달(모수)은 **{reach}**가 큼 — 효율과 규모는 다른 축이니 목적에 맞게 판단.")
