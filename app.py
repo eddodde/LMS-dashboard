@@ -257,31 +257,35 @@ with st.sidebar:
 
     df_raw = load_data(file_upload)
 
-    # ── 분석 메뉴 (업로드 바로 아래) ──
+    # ── 분석 메뉴 (아코디언: 선택한 메뉴 바로 아래 하위 섹션 펼침) ──
     st.markdown("---")
+    st.markdown("**📂 분석 메뉴**")
     PAGES = ["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석",
              "🗂 캠페인 상세", "🏷 AF코드별 효율", "⚖️ A vs B 비교"]
-    PAGE_DESC = {
-        "📡 채널별 분석": "채널 효율 비교 · 종합성과 · 일자별 추이",
-        "📅 월별 트렌드": "월별 추이 · 요일/시간대 · 요일×시간 히트맵",
-        "🔤 문구 키워드 분석": "카테고리 성과 · 키워드 빈도/리프트 · 문구 진단",
-        "🗂 캠페인 상세": "전체 캠페인 표 · 반복 캠페인 추이",
-        "🏷 AF코드별 효율": "AF코드(캠페인)별 효율 · 타겟vs거래액",
-        "⚖️ A vs B 비교": "두 항목 효율 나란히 비교",
-    }
-    nav = st.radio("📂 분석 메뉴", PAGES, key='nav')
-
-    # 선택한 메뉴의 세부 섹션으로 바로 점프 (메뉴에 바로 붙여 명확히)
-    _secs = SECTIONS.get(nav, [])
-    if _secs:
-        page_name = nav.split(' ', 1)[-1]
-        links = " · ".join(f'<a href="#{a}" style="text-decoration:none;color:#2E68B0">{lbl}</a>' for a, lbl in _secs)
-        st.markdown(
-            f"<div style='background:#F2F5FA;border-left:3px solid #2E68B0;padding:7px 10px;margin-top:4px;border-radius:4px'>"
-            f"<span style='font-size:0.8em;color:#666'>📍 '{page_name}' 안에서 이동</span><br>"
-            f"<span style='font-size:0.85em'>{links}</span></div>",
-            unsafe_allow_html=True,
-        )
+    sel = st.session_state.get('nav', PAGES[0])
+    if sel not in PAGES:
+        sel = PAGES[0]
+    for p in PAGES:
+        if st.button(p, key=f'navbtn_{p}', use_container_width=True,
+                     type=('primary' if p == sel else 'secondary')):
+            if p != sel:
+                st.session_state['nav'] = p
+                st.rerun()
+        if p == sel:
+            _secs = SECTIONS.get(p, [])
+            if _secs:
+                links = " · ".join(
+                    f'<a href="#{a}" style="text-decoration:none;color:#2E68B0">{lbl}</a>' for a, lbl in _secs
+                )
+                st.markdown(
+                    f"<div style='background:#F2F5FA;border-left:3px solid #2E68B0;"
+                    f"padding:6px 10px;margin:2px 0 10px 14px;border-radius:4px'>"
+                    f"<span style='font-size:0.78em;color:#666'>📍 '{p.split(' ', 1)[-1]}' 안에서 이동</span><br>"
+                    f"<span style='font-size:0.85em'>{links}</span></div>",
+                    unsafe_allow_html=True,
+                )
+    nav = sel
+    st.session_state['nav'] = sel
 
     # ── 데이터 필터 ──
     st.markdown("---")
