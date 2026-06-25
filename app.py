@@ -257,10 +257,7 @@ with st.sidebar:
 
     df_raw = load_data(file_upload)
 
-    선택_채널 = st.multiselect("📡 채널", ['SMS', 'LMS', 'MMS'], default=['SMS', 'LMS'])
-    연도_옵션 = sorted(df_raw['연도'].dropna().unique().tolist(), reverse=True)
-    선택_연도 = st.multiselect("📅 연도", 연도_옵션, default=연도_옵션)
-
+    # ── 분석 메뉴 (업로드 바로 아래) ──
     st.markdown("---")
     PAGES = ["📡 채널별 분석", "📅 월별 트렌드", "🔤 문구 키워드 분석",
              "🗂 캠페인 상세", "🏷 AF코드별 효율", "⚖️ A vs B 비교"]
@@ -273,16 +270,26 @@ with st.sidebar:
         "⚖️ A vs B 비교": "두 항목 효율 나란히 비교",
     }
     nav = st.radio("📂 분석 메뉴", PAGES, key='nav')
-    st.caption(PAGE_DESC.get(nav, ""))
 
-    # 현재 페이지의 세부 섹션으로 바로 점프
+    # 선택한 메뉴의 세부 섹션으로 바로 점프 (메뉴에 바로 붙여 명확히)
     _secs = SECTIONS.get(nav, [])
     if _secs:
-        links = " · ".join(f'<a href="#{a}" style="text-decoration:none">{lbl}</a>' for a, lbl in _secs)
-        st.markdown(f"**↓ 바로가기**<br><span style='font-size:0.85em'>{links}</span>", unsafe_allow_html=True)
+        page_name = nav.split(' ', 1)[-1]
+        links = " · ".join(f'<a href="#{a}" style="text-decoration:none;color:#2E68B0">{lbl}</a>' for a, lbl in _secs)
+        st.markdown(
+            f"<div style='background:#F2F5FA;border-left:3px solid #2E68B0;padding:7px 10px;margin-top:4px;border-radius:4px'>"
+            f"<span style='font-size:0.8em;color:#666'>📍 '{page_name}' 안에서 이동</span><br>"
+            f"<span style='font-size:0.85em'>{links}</span></div>",
+            unsafe_allow_html=True,
+        )
 
+    # ── 데이터 필터 ──
     st.markdown("---")
-    st.caption("데이터 기준: 발송일 기준")
+    st.caption("🔎 데이터 필터")
+    선택_채널 = st.multiselect("📡 채널", ['SMS', 'LMS', 'MMS'], default=['SMS', 'LMS'])
+    연도_옵션 = sorted(df_raw['연도'].dropna().unique().tolist(), reverse=True)
+    선택_연도 = st.multiselect("📅 연도", 연도_옵션, default=연도_옵션)
+    st.caption("데이터 기준: 발송일")
 
 
 # ── 필터 적용 ──────────────────────────────────────────────
