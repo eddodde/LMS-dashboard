@@ -1177,94 +1177,99 @@ elif nav == "🔤 문구 키워드 분석":
             r = v / base
             return '높은 편 ▲' if r >= 1.15 else ('낮은 편 ▼' if r <= 0.87 else '보통 —')
 
-        # 개인화([고객명])는 거의 모든 문구에 들어가 변별력이 없음 → 유사도 기준에서 제외
+        # 개인화([고객명])는 거의 모든 문구에 들어가 변별력이 없음 → 신호에서 제외
         cats_all = get_text_categories(diag_txt)
         cats = [c for c in cats_all if c not in ('상품/기타', '개인화')]
-        if cats:
-            sim = df_kw_perf[df_kw_perf['문구'].apply(lambda t: any(c in get_text_categories(t) for c in cats))]
-            basis = f"'{', '.join(cats)}' 포함 과거 문구 {len(sim):,}건 기준"
-        else:
-            sim = df_kw_perf
-            basis = f"변별 카테고리 없음(개인화·상품명 위주) → 전체 {len(sim):,}건 평균 기준"
-        exp_ctr, exp_cr, exp_roas = w_avg(sim['CTR'], sim['모수']), w_cr(sim), pooled_roas(sim)
-
-        shown_cats = [c for c in cats_all if c != '상품/기타']
-        st.markdown("**감지 카테고리:** " + (
-            " ".join(f"`{c}`" + ("(변별X)" if c == '개인화' else "") for c in shown_cats)
-            if shown_cats else "특이 카테고리 없음(일반 문구)"))
-        d1, d2, d3 = st.columns(3)
-        d1.metric("예상 CTR", f"{exp_ctr:.1%}" if pd.notna(exp_ctr) else '-', _band(exp_ctr, base_ctr), delta_color="off")
-        d2.metric("예상 CR", f"{exp_cr:.1%}" if pd.notna(exp_cr) else '-', _band(exp_cr, base_cr), delta_color="off")
-        d3.metric("예상 ROAS", f"{exp_roas:,.0f}%" if pd.notna(exp_roas) else '-', _band(exp_roas, base_roas), delta_color="off")
-        st.caption(
-            f"📌 **산출 근거:** 입력 문구에서 감지한 카테고리를 포함한 **과거 발송 {len(sim):,}건의 실제 실적 가중평균**이에요. "
-            f"즉 '이런 유형의 문구는 보통 이 정도 나왔다'는 뜻 (예측 모델 X). "
-            f"감지 키워드가 없으면 전체 평균으로 대체.  \n"
-            f"비교 기준 = 전체 평균 CTR {base_ctr:.1%} / CR {base_cr:.1%} / ROAS {base_roas:,.0f}% "
-            f"→ 이보다 높으면 ▲, 낮으면 ▼."
-        )
-
         cand = set()
         for ws in KW_CATEGORIES.values():
             cand.update(ws)
         if len(kw_perf_all):
             cand.update(kw_perf_all['키워드'].tolist())
-        present = sorted({w for w in cand if w and w in diag_txt}, key=lambda x: -len(x))
-        krows = []
-        for w in present:
-            has = df_kw_perf[df_kw_perf['문구'].str.contains(re.escape(w), na=False)]
-            if len(has) == 0:
-                continue
-            krows.append({
-                '키워드': w, '카테고리': classify_keyword(w), '과거이력': len(has),
-                'CTR 영향': _band(w_avg(has['CTR'], has['모수']), base_ctr),
-                'ROAS 영향': _band(pooled_roas(has), base_roas),
-                '표본': '충분' if len(has) >= MIN_KW_CASES else '부족(참고)',
-            })
-        if krows:
-            st.markdown("**입력 문구 속 키워드별 예상 영향** (과거 이 키워드가 든 캠페인 기준)")
-            st.dataframe(pd.DataFrame(krows), use_container_width=True, hide_index=True)
-            st.caption("⚠️ '영향'은 인과가 아니라 과거 상관. 표본 '부족'은 그 캠페인 오퍼·타겟 탓일 수 있으니 참고만.")
-        else:
-            st.caption("과거 데이터에 매칭되는 키워드가 없어요. (신규 표현이거나 상품명 위주 문구)")
+        present = [w for w in sorted({w for w in cand if w and w in diag_txt}, key=lambda x: -len(x))
+                   if len(df_kw_perf[df_kw_perf['문구'].str.contains(re.escape(w), na=False)]) > 0]
 
-        # ── 개선 제안 + 잘 나간 예시 문구 (과거 데이터 기반, AI 창작 아님) ──
-        st.markdown("**💡 개선 제안 & 추천 문구**")
-        st.caption(
-            "입력 문구를 과거 데이터와 비교해 ① **추가하면 좋을 요소**(과거 성과 높았는데 지금 문구엔 없는 것), "
-            "② **다시 볼 요소**(들어있지만 과거 성과 낮았던 것), "
-            "③ **비슷한 유형에서 실제로 잘 나간 문구**를 보여줍니다. 아래 항목을 참고해 문구를 다듬어 보세요."
-        )
-        cat_perf = {}
-        for c in KW_CATEGORIES:
-            if c in ('상품/기타', '개인화'):
-                continue
-            sub = df_kw_perf[df_kw_perf['문구'].apply(lambda t: c in get_text_categories(t))]
-            if len(sub) >= MIN_KW_CASES:
-                cat_perf[c] = (pooled_roas(sub), len(sub))
-        present_set = set(cats_all)
-        tips = []
-        for c, (roas, n) in sorted(cat_perf.items(), key=lambda x: -(x[1][0] if pd.notna(x[1][0]) else -1)):
-            if c not in present_set and pd.notna(roas) and pd.notna(base_roas) and roas >= base_roas * 1.1:
-                ex = ' / '.join(KW_CATEGORIES[c][:3])
-                tips.append(f"➕ **{c}** 표현 추가 검토 — 과거 이 요소가 든 문구 ROAS {roas:,.0f}% (전체 {base_roas:,.0f}%). 예: {ex}")
-            if len(tips) >= 3:
-                break
-        for c in cats:
-            if c in cat_perf and pd.notna(cat_perf[c][0]) and cat_perf[c][0] <= base_roas * 0.87:
-                tips.append(f"⚠️ **{c}** 포함 — 과거 ROAS {cat_perf[c][0]:,.0f}%로 낮은 편. 오퍼·타겟과 함께 점검.")
-        if tips:
-            for t in tips:
-                st.markdown("- " + t)
+        if not cats and not present:
+            # 마케팅 신호가 전혀 없으면 예상을 내지 않음 (예: '안녕하세요')
+            st.warning(
+                "이 문구에선 분석할 **마케팅 요소(할인·쿠폰·마감·시즌·혜택 등)가 감지되지 않아** 예상을 낼 수 없어요.  \n"
+                "실제 캠페인에 쓰는 표현이 들어가야 과거 데이터와 비교됩니다. (지금은 인사말·일반 텍스트로 보임)"
+            )
         else:
-            st.caption("뚜렷한 개선 포인트는 없어요. (이미 고성과 요소 포함이거나 변별 신호가 적음)")
+            # 유사 문구 집합 — 카테고리 우선, 없으면 감지 키워드 기준
+            if cats:
+                sim = df_kw_perf[df_kw_perf['문구'].apply(lambda t: any(c in get_text_categories(t) for c in cats))]
+                basis = f"'{', '.join(cats)}' 포함 과거 문구 {len(sim):,}건"
+            else:
+                sim = df_kw_perf[df_kw_perf['문구'].apply(lambda t: any(w in str(t) for w in present))]
+                basis = f"감지 키워드({', '.join(present[:3])}) 포함 과거 문구 {len(sim):,}건"
+            exp_ctr, exp_cr, exp_roas = w_avg(sim['CTR'], sim['모수']), w_cr(sim), pooled_roas(sim)
 
-        ref = sim.sort_values('ROAS', ascending=False).head(3)
-        if len(ref):
-            st.markdown("**참고 — 비슷한 유형에서 잘 나간 실제 문구 (ROAS 상위):**")
-            for _, r in ref.iterrows():
-                st.markdown(f"- **ROAS {r['ROAS']:.0f}%** · {str(r['문구'])[:110]}")
-        st.caption("※ 과거 발송 데이터 기반 제안이지 AI가 새로 쓴 문구는 아닙니다. 실제 적용 전 A/B로 검증 권장.")
+            shown_cats = [c for c in cats_all if c != '상품/기타']
+            st.markdown("**감지 카테고리:** " + (
+                " ".join(f"`{c}`" + ("(변별X)" if c == '개인화' else "") for c in shown_cats)
+                if shown_cats else "카테고리는 없지만 키워드 신호로 추정"))
+            d1, d2, d3 = st.columns(3)
+            d1.metric("예상 CTR", f"{exp_ctr:.1%}" if pd.notna(exp_ctr) else '-', _band(exp_ctr, base_ctr), delta_color="off")
+            d2.metric("예상 CR", f"{exp_cr:.1%}" if pd.notna(exp_cr) else '-', _band(exp_cr, base_cr), delta_color="off")
+            d3.metric("예상 ROAS", f"{exp_roas:,.0f}%" if pd.notna(exp_roas) else '-', _band(exp_roas, base_roas), delta_color="off")
+            st.caption(
+                f"📌 **산출 근거:** {basis}의 **실제 실적 가중평균**이에요. "
+                f"즉 '이런 유형의 문구는 보통 이 정도 나왔다'는 뜻 (예측 모델 X).  \n"
+                f"비교 기준 = 전체 평균 CTR {base_ctr:.1%} / CR {base_cr:.1%} / ROAS {base_roas:,.0f}% "
+                f"→ 이보다 높으면 ▲, 낮으면 ▼."
+            )
+
+            krows = []
+            for w in present:
+                has = df_kw_perf[df_kw_perf['문구'].str.contains(re.escape(w), na=False)]
+                krows.append({
+                    '키워드': w, '카테고리': classify_keyword(w), '과거이력': len(has),
+                    'CTR 영향': _band(w_avg(has['CTR'], has['모수']), base_ctr),
+                    'ROAS 영향': _band(pooled_roas(has), base_roas),
+                    '표본': '충분' if len(has) >= MIN_KW_CASES else '부족(참고)',
+                })
+            if krows:
+                st.markdown("**입력 문구 속 키워드별 예상 영향** (과거 이 키워드가 든 캠페인 기준)")
+                st.dataframe(pd.DataFrame(krows), use_container_width=True, hide_index=True)
+                st.caption("⚠️ '영향'은 인과가 아니라 과거 상관. 표본 '부족'은 그 캠페인 오퍼·타겟 탓일 수 있으니 참고만.")
+
+            # ── 개선 제안 + 잘 나간 예시 문구 (과거 데이터 기반, AI 창작 아님) ──
+            st.markdown("**💡 개선 제안 & 추천 문구**")
+            st.caption(
+                "입력 문구를 과거 데이터와 비교해 ① **추가하면 좋을 요소**(과거 성과 높았는데 지금 문구엔 없는 것), "
+                "② **다시 볼 요소**(들어있지만 과거 성과 낮았던 것), "
+                "③ **비슷한 유형에서 실제로 잘 나간 문구**를 보여줍니다. 아래 항목을 참고해 문구를 다듬어 보세요."
+            )
+            cat_perf = {}
+            for c in KW_CATEGORIES:
+                if c in ('상품/기타', '개인화'):
+                    continue
+                sub = df_kw_perf[df_kw_perf['문구'].apply(lambda t: c in get_text_categories(t))]
+                if len(sub) >= MIN_KW_CASES:
+                    cat_perf[c] = (pooled_roas(sub), len(sub))
+            present_set = set(cats_all)
+            tips = []
+            for c, (roas, n) in sorted(cat_perf.items(), key=lambda x: -(x[1][0] if pd.notna(x[1][0]) else -1)):
+                if c not in present_set and pd.notna(roas) and pd.notna(base_roas) and roas >= base_roas * 1.1:
+                    ex = ' / '.join(KW_CATEGORIES[c][:3])
+                    tips.append(f"➕ **{c}** 표현 추가 검토 — 과거 이 요소가 든 문구 ROAS {roas:,.0f}% (전체 {base_roas:,.0f}%). 예: {ex}")
+                if len(tips) >= 3:
+                    break
+            for c in cats:
+                if c in cat_perf and pd.notna(cat_perf[c][0]) and cat_perf[c][0] <= base_roas * 0.87:
+                    tips.append(f"⚠️ **{c}** 포함 — 과거 ROAS {cat_perf[c][0]:,.0f}%로 낮은 편. 오퍼·타겟과 함께 점검.")
+            if tips:
+                for t in tips:
+                    st.markdown("- " + t)
+            else:
+                st.caption("뚜렷한 개선 포인트는 없어요. (이미 고성과 요소 포함이거나 변별 신호가 적음)")
+
+            ref = sim.sort_values('ROAS', ascending=False).head(3)
+            if len(ref):
+                st.markdown("**참고 — 비슷한 유형에서 잘 나간 실제 문구 (ROAS 상위):**")
+                for _, r in ref.iterrows():
+                    st.markdown(f"- **ROAS {r['ROAS']:.0f}%** · {str(r['문구'])[:110]}")
+            st.caption("※ 과거 발송 데이터 기반 제안이지 AI가 새로 쓴 문구는 아닙니다. 실제 적용 전 A/B로 검증 권장.")
 
 
 # ══ 캠페인 상세 ══════════════════════════════════
