@@ -19,12 +19,19 @@ GEMINI_FALLBACK_MODELS = [
     "gemini-2.5-flash", "gemini-2.5-pro",
     "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro",
 ]
-_AI_SYSTEM = (
-    "너는 LF몰 CRM 문자(LMS) 카피라이터다. 한국 정보통신망법을 지킨다"
-    "((광고) 표기·전송자 명칭·무료 수신거부 안내). LMS는 길이 제약이 있으니 간결하게, "
-    "한 줄 핵심 혜택 + 명확한 CTA를 살린다. "
-    "개선안 2~3개를 제시하고 각각 '왜 더 나은지' 한 줄로 설명해라. 한국어로 답해라."
-)
+def _ai_system(fmt):
+    if fmt == "SMS":
+        style = ("출력은 **SMS 단문**: 한글 약 45자(90바이트) 이내로 핵심 혜택 1개 + 명확한 CTA를 한 줄로 압축한다.")
+    else:  # LMS 장문
+        style = ("출력은 **LMS 장문**(최대 한글 약 1,000자): 원문처럼 여러 줄 구성을 유지·강화한다. "
+                 "맨 위에 (광고) 표기 + 개인화 인사 + 핵심 혜택을 끌어올리고, 부가 혜택·마감일·브랜드는 "
+                 "가독성 있게 정리, 맨 아래에 전송자명·무료수신거부를 둔다. "
+                 "**짧게 줄이지 말 것 — 정보는 유지하되 구조·가독성·임팩트를 개선**한다.")
+    return (
+        "너는 LF몰 CRM 문자 카피라이터다. 한국 정보통신망법을 지킨다"
+        "((광고) 표기·전송자 명칭·무료수신거부 안내). " + style +
+        " 개선안 2~3개를 제시하고 각각 '왜 더 나은지'를 한 줄로 설명해라. 한국어로 답해라."
+    )
 
 @st.cache_resource
 def get_gemini():
@@ -82,11 +89,11 @@ def ai_bump():
     except Exception:
         pass
 
-def ai_improve_message(text, model, hint=""):
+def ai_improve_message(text, model, fmt="LMS", hint=""):
     client = get_gemini()
     if client is None:
         return None
-    prompt = f"{_AI_SYSTEM}\n\n다음 LMS 문구를 개선해줘.\n\n[원문]\n{text}\n\n[참고(데이터 진단)]\n{hint}"
+    prompt = f"{_ai_system(fmt)}\n\n다음 문구를 개선해줘.\n\n[원문]\n{text}\n\n[참고(데이터 진단)]\n{hint}"
     resp = client.models.generate_content(model=model, contents=prompt)
     return getattr(resp, "text", None)
 
@@ -1414,19 +1421,22 @@ elif nav == "🔤 문구 키워드 분석":
             st.caption("🔒 **AI 문구 개선(Gemini)**: Secrets에 GOOGLE_API_KEY를 넣으면 활성화됩니다 (하루 3회 제한).")
         else:
             _models = gemini_models()
-            gcol1, gcol2 = st.columns([2, 1])
+            gcol1, gcol2, gcol3 = st.columns([2, 1.2, 1])
             with gcol1:
-                sel_model = st.selectbox("Gemini 모델 선택", _models, key='gemini_model',
+                sel_model = st.selectbox("Gemini 모델", _models, key='gemini_model',
                                          help="Flash=빠르고 저렴 / Pro=고품질·느림·비쌈")
             with gcol2:
+                sel_fmt = st.radio("문구 유형", ["LMS(장문)", "SMS(단문)"], horizontal=True, key='ai_fmt')
+            with gcol3:
                 left = ai_calls_left()
-                st.metric("오늘 남은 횟수", f"{left}/{AI_DAILY_LIMIT}")
+                st.metric("오늘 남은", f"{left}/{AI_DAILY_LIMIT}")
+            fmt = "SMS" if sel_fmt.startswith("SMS") else "LMS"
             if left <= 0:
                 st.warning(f"오늘 AI 개선 한도({AI_DAILY_LIMIT}회)를 모두 사용했어요. 내일 다시 가능합니다.")
-            elif st.button(f"🤖 {sel_model}로 문구 개선안 받기", key="ai_improve_btn"):
-                with st.spinner(f"Gemini({sel_model})가 문구를 다듬는 중…"):
+            elif st.button(f"🤖 {sel_model}로 {sel_fmt} 개선안 받기", key="ai_improve_btn"):
+                with st.spinner(f"Gemini({sel_model})가 {sel_fmt} 문구를 다듬는 중…"):
                     try:
-                        out = ai_improve_message(diag_txt, sel_model, hint=_cats_hint)
+                        out = ai_improve_message(diag_txt, sel_model, fmt=fmt, hint=_cats_hint)
                         ai_bump()
                     except Exception as e:
                         out = None
