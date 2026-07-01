@@ -1421,10 +1421,12 @@ elif nav == "🔤 문구 키워드 분석":
             st.caption("🔒 **AI 문구 개선(Gemini)**: Secrets에 GOOGLE_API_KEY를 넣으면 활성화됩니다 (하루 3회 제한).")
         else:
             _models = gemini_models()
+            _pref = next((m for m in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"] if m in _models), None)
+            _idx = _models.index(_pref) if _pref else 0
             gcol1, gcol2, gcol3 = st.columns([2, 1.2, 1])
             with gcol1:
-                sel_model = st.selectbox("Gemini 모델", _models, key='gemini_model',
-                                         help="Flash=빠르고 저렴 / Pro=고품질·느림·비쌈")
+                sel_model = st.selectbox("Gemini 모델", _models, index=_idx, key='gemini_model',
+                                         help="무료 할당량은 모델·계정마다 달라요. 실패하면 다른 모델을 골라보세요.")
             with gcol2:
                 sel_fmt = st.radio("문구 유형", ["LMS(장문)", "SMS(단문)"], horizontal=True, key='ai_fmt')
             with gcol3:
@@ -1440,7 +1442,15 @@ elif nav == "🔤 문구 키워드 분석":
                         ai_bump()
                     except Exception as e:
                         out = None
-                        st.error(f"AI 호출 실패: {e}")
+                        _m = str(e)
+                        if any(k in _m for k in ("RESOURCE_EXHAUSTED", "429")) or "quota" in _m.lower():
+                            st.error(
+                                f"⚠️ **'{sel_model}'은(는) 이 키에서 무료 할당량이 없거나 소진**됐어요.  \n"
+                                f"→ 위 드롭다운에서 **다른 모델(예: gemini-2.5-flash)**을 골라 다시 시도해보세요.  \n"
+                                f"→ 모든 모델이 막히면 Google Cloud에서 **결제(billing)를 활성화**해야 해요."
+                            )
+                        else:
+                            st.error(f"AI 호출 실패: {e}")
                 if out:
                     st.markdown(out)
                     st.caption("※ AI 생성안입니다. 발송 전 (광고) 표기·무료수신거부 등 컴플라이언스와 사실관계를 꼭 확인하세요.")
