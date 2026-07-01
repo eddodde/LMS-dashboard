@@ -11,25 +11,53 @@ import pathlib
 from collections import Counter
 
 
-# ── AI 문구 개선 (Claude API) — 키가 있을 때만 동작, 하루 제한 ──────────────────────────
-AI_MODEL = "claude-haiku-4-5"      # 프로토타입: 저비용 모델
+# ── AI 문구 개선 (Google Gemini) — 키가 있을 때만 동작, 모델 선택·하루 제한 ──────────────
 AI_DAILY_LIMIT = 3                  # 하루 호출 한도 (전체 공용)
 _AI_USAGE = pathlib.Path("ai_usage.json")
+# API로 목록 조회 실패 시 쓸 기본 모델 목록 (원하면 수정)
+GEMINI_FALLBACK_MODELS = [
+    "gemini-2.5-flash", "gemini-2.5-pro",
+    "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro",
+]
+_AI_SYSTEM = (
+    "너는 LF몰 CRM 문자(LMS) 카피라이터다. 한국 정보통신망법을 지킨다"
+    "((광고) 표기·전송자 명칭·무료 수신거부 안내). LMS는 길이 제약이 있으니 간결하게, "
+    "한 줄 핵심 혜택 + 명확한 CTA를 살린다. "
+    "개선안 2~3개를 제시하고 각각 '왜 더 나은지' 한 줄로 설명해라. 한국어로 답해라."
+)
 
 @st.cache_resource
-def get_claude():
-    """API 키가 Secrets에 있으면 Anthropic 클라이언트, 없으면 None."""
+def get_gemini():
+    """GOOGLE_API_KEY가 Secrets에 있으면 Gemini 클라이언트, 없으면 None."""
     try:
-        key = st.secrets.get("ANTHROPIC_API_KEY")
+        key = st.secrets.get("GOOGLE_API_KEY")
     except Exception:
         key = None
     if not key:
         return None
     try:
-        import anthropic
-        return anthropic.Anthropic(api_key=key)
+        from google import genai
+        return genai.Client(api_key=key)
     except Exception:
         return None
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def gemini_models():
+    """계정에서 쓸 수 있는 Gemini 모델 목록 (실패 시 기본 목록)."""
+    client = get_gemini()
+    if client is None:
+        return GEMINI_FALLBACK_MODELS
+    try:
+        names = []
+        for m in client.models.list():
+            name = (getattr(m, "name", "") or "").split("/")[-1]
+            actions = getattr(m, "supported_actions", None) or []
+            if name.startswith("gemini") and (not actions or "generateContent" in actions):
+                names.append(name)
+        names = sorted(set(names))
+        return names or GEMINI_FALLBACK_MODELS
+    except Exception:
+        return GEMINI_FALLBACK_MODELS
 
 def ai_calls_left():
     try:
@@ -54,23 +82,13 @@ def ai_bump():
     except Exception:
         pass
 
-def ai_improve_message(text, hint=""):
-    client = get_claude()
+def ai_improve_message(text, model, hint=""):
+    client = get_gemini()
     if client is None:
         return None
-    resp = client.messages.create(
-        model=AI_MODEL,
-        max_tokens=1500,
-        system=(
-            "너는 LF몰 CRM 문자(LMS) 카피라이터다. 한국 정보통신망법을 지킨다"
-            "((광고) 표기·전송자 명칭·무료 수신거부 안내). LMS는 길이 제약이 있으니 간결하게, "
-            "한 줄 핵심 혜택 + 명확한 CTA를 살린다. "
-            "개선안 2~3개를 제시하고 각각 '왜 더 나은지' 한 줄로 설명해라. 한국어로 답해라."
-        ),
-        messages=[{"role": "user",
-                   "content": f"다음 LMS 문구를 개선해줘.\n\n[원문]\n{text}\n\n[참고(데이터 진단)]\n{hint}"}],
-    )
-    return "".join(b.text for b in resp.content if b.type == "text")
+    prompt = f"{_AI_SYSTEM}\n\n다음 LMS 문구를 개선해줘.\n\n[원문]\n{text}\n\n[참고(데이터 진단)]\n{hint}"
+    resp = client.models.generate_content(model=model, contents=prompt)
+    return getattr(resp, "text", None)
 
 st.set_page_config(
     page_title="LMS 발송 성과 대시보드",
@@ -1389,19 +1407,26 @@ elif nav == "🔤 문구 키워드 분석":
                     st.markdown(f"- **ROAS {r['ROAS']:.0f}%** · {str(r['문구'])[:110]}")
             st.caption("※ 과거 발송 데이터·규칙 기반 제안입니다. 실제 적용 전 (광고)표기·무료수신거부 확인 + A/B 검증 권장.")
 
-        # ── 🤖 AI 문구 개선 (Claude Haiku) — 키 있을 때만 / 하루 제한 ──────────────
+        # ── 🤖 AI 문구 개선 (Google Gemini) — 키 있을 때만 / 모델 선택 / 하루 제한 ──────────────
         st.markdown("---")
         _cats_hint = ", ".join(cats) if cats else "특이 신호 없음"
-        if get_claude() is None:
-            st.caption("🔒 **AI 문구 개선**: Secrets에 ANTHROPIC_API_KEY를 넣으면 활성화됩니다 (프로토타입: Haiku, 하루 3회).")
+        if get_gemini() is None:
+            st.caption("🔒 **AI 문구 개선(Gemini)**: Secrets에 GOOGLE_API_KEY를 넣으면 활성화됩니다 (하루 3회 제한).")
         else:
-            left = ai_calls_left()
+            _models = gemini_models()
+            gcol1, gcol2 = st.columns([2, 1])
+            with gcol1:
+                sel_model = st.selectbox("Gemini 모델 선택", _models, key='gemini_model',
+                                         help="Flash=빠르고 저렴 / Pro=고품질·느림·비쌈")
+            with gcol2:
+                left = ai_calls_left()
+                st.metric("오늘 남은 횟수", f"{left}/{AI_DAILY_LIMIT}")
             if left <= 0:
                 st.warning(f"오늘 AI 개선 한도({AI_DAILY_LIMIT}회)를 모두 사용했어요. 내일 다시 가능합니다.")
-            elif st.button(f"🤖 AI로 문구 개선안 받기 (오늘 {left}회 남음)", key="ai_improve_btn"):
-                with st.spinner("Claude(Haiku)가 문구를 다듬는 중…"):
+            elif st.button(f"🤖 {sel_model}로 문구 개선안 받기", key="ai_improve_btn"):
+                with st.spinner(f"Gemini({sel_model})가 문구를 다듬는 중…"):
                     try:
-                        out = ai_improve_message(diag_txt, hint=_cats_hint)
+                        out = ai_improve_message(diag_txt, sel_model, hint=_cats_hint)
                         ai_bump()
                     except Exception as e:
                         out = None
